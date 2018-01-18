@@ -309,9 +309,9 @@ public class Robot extends IterativeRobot {
 				//UNTESTED & probably unused
 				positionPID.setSetpoint(168*countsPerInch);
 				turningPID.setSetpoint(turnSetpoint);
-				output = positionPID.computePID(ahrs.getAngle(),t.get());
+				output = positionPID.computePID(0/*encoder*/,t.get());
 				
-				robot.arcadeDrive(output, positionPID.computePID(0/*insert encoder stuff*/, t.get()));
+				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
 				//INCOMPLETE ^
 				if(output < 0.05)
 					start = true;
@@ -327,13 +327,21 @@ public class Robot extends IterativeRobot {
 				
 				break;
 			case "Near Switch Approach"://approach the switch
+				//UNTESTED
+				positionPID.setSetpoint(21.81*countsPerInch);
+				output = positionPID.coputePID(0/*encoder stuff*/, t.get());
 				
+				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(),t.get()));
+				
+				if(output < 0.05)
+					start = true;
 				break;
 			case "Switch Place": //Turn and place cube
-				
 				//UNTESTED
-				
+				robot.arcadeDrive(0,0);
 				//place
+				
+				//when done
 				break;
 			case "Drive Farther": //Initial Drive plus some
 				//code to keep moving
