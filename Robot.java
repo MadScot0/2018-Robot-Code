@@ -123,8 +123,8 @@ public class Robot extends IterativeRobot {
     	testCase.addObject("Drive Farther", 8);
     	testCase.addObject("Near Scale Place", 9);
     	testCase.addObject("Cross Field", 10);
-    	testCase.addObject("Far Switch Place", 11);
-    	testCase.addObject("Far Scale Place", 12);
+    	testCase.addObject("Switch Place", 11);
+    	testCase.addObject("Scale Place", 12);
     	
     	
     	positionPID = new SRF_PID();
@@ -153,24 +153,31 @@ public class Robot extends IterativeRobot {
     	
     	auto[1][0] = "Initial Drive";//place cube on nearest switch platform
     	auto[1][1] = "Turn";
-    	auto[1][2] = "Near Switch Approach";
+    	auto[1][2] = "Switch Approach";
     	auto[1][3] = "Switch Place";
     	auto[1][4] = "Done";
     	
     	auto[2][0] = "Drive Farther";//place cube on far switch platform
     	auto[2][1] = "Cross Field";
-    	auto[2][2] = "Far Switch Place";
-    	auto[2][3] = "Done";
+	auto[2][2] = "Turn"; //adjust
+	auto[2][3] = "Turn";
+    	auto[2][4] = "Switch Approach";
+    	auto[2][5] = "Done";
     	
     	auto[3][0] = "Near Scale Initial";//place cube on near scale platform
     	auto[3][1] = "Turn";
-    	auto[3][2] = "Scale Place";
-    	auto[3][3] = "Done";
+	auto[3][2] = "Scale Approach";
+    	auto[3][3] = "Scale Place";
+    	auto[3][4] = "Done";
     	
     	auto[4][0] = "Drive Farther"; //place cube on far scale platform
-    	auto[4][1] = "Cross Field";
-    	auto[4][2] = "Far Scale Place";
-    	auto[4][3] = "Done";
+	auto[4][1] = "Turn";
+    	auto[4][2] = "Cross Field";
+	auto[4][3] = "Turn Opposite"; //adjust
+	auto[4][4] = "Turn Opposite";
+	auto[4][5] = "Scale Approach";
+    	auto[4][6] = "Scale Place";
+    	auto[4][7] = "Done";
     	
     	//testing sequences
     	auto[5][0] = "Basic Drive";
@@ -180,7 +187,7 @@ public class Robot extends IterativeRobot {
     	auto[6][1] = "Done";
     	
     	auto[7][0] = "Turn";
-    	auto[7][1] = "Near Switch Approach";
+    	auto[7][1] = "Switch Approach";
     	auto[7][2] = "Switch Place";
     	auto[7][3] = "Done";
     	
@@ -189,18 +196,19 @@ public class Robot extends IterativeRobot {
     	
     	auto[9][0] = "Near Scale Initial";
     	auto[9][1] = "Turn";
-    	auto[9][2] = "Scale Place";
-    	auto[9][3] = "Done";
+	auto[9][2] = "Scale Approach";
+    	auto[9][3] = "Scale Place";
+    	auto[9][4] = "Done";
     	
     	auto[10][0] = "Cross Field";
     	auto[10][1] = "Done";
     	
-    	auto[11][0] = "Far Switch Place";
+    	auto[11][0] = "Switch Place";
     	auto[11][1] = "Done";
     	
-    	auto[12][0] = "Far Scale Place";
-    	auto[12][1] = "Done";
-    	
+	auto[12][0] = "Scale Place";
+	auto[12][1] = "Done";
+	    
     	
     	//initialize our Robot's location on the field
     	if((int) startingLocation.getSelected() == 1)
@@ -283,7 +291,9 @@ public class Robot extends IterativeRobot {
 			autoCase = auto[autoID][autoStep];
 			
 			if(autoCase == "Turn")
-				turnSetpoint+=(90/*turningMult*/);
+				turnSetpoint+=(90/**turningMult*/);
+			else if(autoCase == "Turn Opposite")
+				turnSetpoint-=(90/**turningMult*/);
 			
 			//Disable initialization
 			start = false;
@@ -306,8 +316,8 @@ public class Robot extends IterativeRobot {
 				break;
 			case "Initial Drive": //Drive forward on the side and get ready to place
 				
-				//UNTESTED & probably unused
-				positionPID.setSetpoint(168*countsPerInch);
+				//UNTESTED
+				positionPID.setSetpoint(151.5*countsPerInch);
 				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(0/*encoder*/,t.get());
 				
@@ -326,7 +336,16 @@ public class Robot extends IterativeRobot {
 					start = true;
 				
 				break;
-			case "Near Switch Approach"://approach the switch
+			case "Turn Opposite": //Turn 90 degrees in the other direction
+				//UNTESTED
+				output = turningPID.computePID(ahrs.getAngle(),t.get());
+				robot.arcadeDrive(0, output);
+				
+				if(output < 0.05)
+					start = true;
+				
+				break;
+			case "Switch Approach"://approach the switch
 				//UNTESTED
 				positionPID.setSetpoint(21.81*countsPerInch);
 				output = positionPID.coputePID(0/*encoder stuff*/, t.get());
@@ -344,21 +363,54 @@ public class Robot extends IterativeRobot {
 				//when done
 				break;
 			case "Drive Farther": //Initial Drive plus some
-				//code to keep moving
+				//UNTESTED
+				positionPID.setSetpoint(226.72*countsPerInch);
+				turningPID.setSetpoint(turnSetpoint);
+				output = positionPID.computePID(0/*encoder*/,t.get());
+				
+				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
+				//INCOMPLETE need encoders ^
+				if(output < 0.05)
+					start = true;
 				break;
 			case "Near Scale Initial": //Travel Farther plus drive
-				//statement to place cube on scale
+				//UNTESTED
+				positionPID.setSetpoint(304.25*countsPerInch);
+				turningPID.setSetpoint(turnSetpoint);
+				output = positionPID.computePID(0/*encoder*/,t.get());
+				
+				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
+				//INCOMPLETE need encoders ^
+				if(output < 0.05)
+					start = true;
 				break;
 			case "Scale Place"://place a cube on the scale
 				break;
 			case "Cross Field"://Travel across the field
-				//code to do that
+				///UNTESTED
+				positionPID.setSetpoint(295.68*countsPerInch);
+				turningPID.setSetpoint(turnSetpoint);
+				output = positionPID.computePID(0/*encoder*/,t.get());
+				
+				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
+				//INCOMPLETE need encoders ^
+				if(output < 0.05)
+					start = true;
 				break;
 			case "Far Switch Place": //Place the cube on the far switch
 				//code to do that
 				break;
-			case "Far Scale Place": //Place the cube on the scale
-				//code for that
+			case "Scale Approach": //Adjust position relative to near scale plate
+				//UNTESTED
+				positionPID.setSetpoint(4.82*countsPerInch);
+				turningPID.setSetpoint(turnSetpoint);
+				output = positionPID.computePID(0/*encoder*/,t.get());
+				
+				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
+				//INCOMPLETE need encoders ^
+				if(output < 0.05)
+					start = true;
+				
 				break;
 			case "Done": //terminate auto
 				
