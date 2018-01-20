@@ -31,7 +31,7 @@ import edu.wpi.first.wpilibj.Victor;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj.vision.VisionThread;
-//                                2018 Bot Code// v1.2
+//                                2018 Bot Code// v1.2.1
 /**
  *
  * The VM is configured to automatically run this class, and to call the
@@ -79,6 +79,8 @@ public class Robot extends IterativeRobot {
 	
 	SRF_PID positionPID;
 	SRF_PID turningPID;
+	
+	Encoder rightSide;
 	
 	double countsPerInch = 81.4873;
 	double output;
@@ -132,6 +134,8 @@ public class Robot extends IterativeRobot {
     	
     	turningPID = new SRF_PID();
     	turningPID.setPID(0.02, 0.02, 0.2);
+    	
+    	rightSide = new Encoder(0, 1);
     }
     
     /**
@@ -159,23 +163,23 @@ public class Robot extends IterativeRobot {
     	
     	auto[2][0] = "Drive Farther";//place cube on far switch platform
     	auto[2][1] = "Cross Field";
-	auto[2][2] = "Turn"; //adjust
-	auto[2][3] = "Turn";
+    	auto[2][2] = "Turn"; //adjust
+    	auto[2][3] = "Turn";
     	auto[2][4] = "Switch Approach";
     	auto[2][5] = "Done";
     	
     	auto[3][0] = "Near Scale Initial";//place cube on near scale platform
     	auto[3][1] = "Turn";
-	auto[3][2] = "Scale Approach";
+    	auto[3][2] = "Scale Approach";
     	auto[3][3] = "Scale Place";
     	auto[3][4] = "Done";
     	
     	auto[4][0] = "Drive Farther"; //place cube on far scale platform
-	auto[4][1] = "Turn";
+    	auto[4][1] = "Turn";
     	auto[4][2] = "Cross Field";
-	auto[4][3] = "Turn Opposite"; //adjust
-	auto[4][4] = "Turn Opposite";
-	auto[4][5] = "Scale Approach";
+    	auto[4][3] = "Turn Opposite"; //adjust
+    	auto[4][4] = "Turn Opposite";
+    	auto[4][5] = "Scale Approach";
     	auto[4][6] = "Scale Place";
     	auto[4][7] = "Done";
     	
@@ -196,7 +200,7 @@ public class Robot extends IterativeRobot {
     	
     	auto[9][0] = "Near Scale Initial";
     	auto[9][1] = "Turn";
-	auto[9][2] = "Scale Approach";
+    	auto[9][2] = "Scale Approach";
     	auto[9][3] = "Scale Place";
     	auto[9][4] = "Done";
     	
@@ -206,8 +210,8 @@ public class Robot extends IterativeRobot {
     	auto[11][0] = "Switch Place";
     	auto[11][1] = "Done";
     	
-	auto[12][0] = "Scale Place";
-	auto[12][1] = "Done";
+    	auto[12][0] = "Scale Place";
+    	auto[12][1] = "Done";
 	    
     	
     	//initialize our Robot's location on the field
@@ -425,7 +429,7 @@ public class Robot extends IterativeRobot {
      * This function is called once each time the robot enters teleoperated mode
      */
     public void teleopInit(){
-    	
+    	rightSide.reset();
     }
 
     /**
@@ -443,6 +447,8 @@ public class Robot extends IterativeRobot {
     	{
     		robot.arcadeDrive(0, 0);
     	}
+    	
+    	SmartDashboard.putNumber("rightSide", rightSide.get());
     }
     
     public void testInit()
