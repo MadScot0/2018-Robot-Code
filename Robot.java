@@ -31,7 +31,7 @@ import edu.wpi.first.wpilibj.Victor;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj.vision.VisionThread;
-//                                2018 Bot Code// v1.2.1
+//                                2018 Bot Code// v1.2.1a
 /**
  *
  * The VM is configured to automatically run this class, and to call the
@@ -82,7 +82,7 @@ public class Robot extends IterativeRobot {
 	
 	Encoder rightSide;
 	
-	double countsPerInch = 81.4873;
+	double countsPerInch = 54.3249;
 	double output;
 	double turnSetpoint;
 	
