@@ -357,7 +357,7 @@ public class Robot extends IterativeRobot {
 			case "Switch Approach"://approach the switch
 				//UNTESTED
 				positionPID.setSetpoint(21.81*countsPerInch);
-				output = positionPID.coputePID(0/*encoder stuff*/, t.get());
+				output = positionPID.computePID(0/*encoder stuff*/, t.get());
 				
 				robot.computeArcade(output, turningPID.computePID(ahrs.getAngle(),t.get()));
 				
