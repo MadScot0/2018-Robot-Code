@@ -47,10 +47,10 @@ public class Robot extends IterativeRobot {
 	Joystick xBox;
 	
 	//MotorType kFrontLeft;
-	Talon frontLeft = new Talon(0);
-	Talon rearLeft = new Talon(1); 
-	Talon frontRight = new Talon(2); 
-	Talon rearRight = new Talon(3);
+	Talon frontLeft = new Talon(2);
+	Talon rearLeft = new Talon(3); 
+	Talon frontRight = new Talon(0); 
+	Talon rearRight = new Talon(1);
 	
 	AHRS ahrs;
 	double angleNow, scaledAngle; //the current angle and the angle to feed into the PID
