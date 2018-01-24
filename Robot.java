@@ -31,7 +31,7 @@ import edu.wpi.first.wpilibj.Victor;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj.vision.VisionThread;
-//                                2018 Bot Code// v1.2.1a
+//                                2018 Bot Code// v1.2.2
 /**
  *
  * The VM is configured to automatically run this class, and to call the
@@ -42,8 +42,7 @@ import edu.wpi.first.wpilibj.vision.VisionThread;
  */
 public class Robot extends IterativeRobot {
 	
-	@SuppressWarnings("deprecation")
-	RobotDrive robot;
+	SRF_Drive robot;
 	Joystick xBox;
 	
 	//MotorType kFrontLeft;
@@ -87,7 +86,7 @@ public class Robot extends IterativeRobot {
 	double turnSetpoint;
 	
     public void robotInit() {
-    	robot = new RobotDrive(frontLeft, rearLeft, frontRight, rearRight);
+    	robot = new SRF_Drive();
     	xBox = new Joystick(0);
     	
     	//initialize choosers
@@ -147,10 +146,11 @@ public class Robot extends IterativeRobot {
     	switchSide = gameData.charAt(0);
     	scaleSide = gameData.charAt(1);
     	
-    	
     	start = true;//initialize variables
     	autoStep = -1;
     	
+	robot.initDrive();
+	    
     	//initialize potential autonomous steps
     	auto[0][0] = "Basic Drive";//drive forward and do nothing
     	auto[0][1] = "Done";
@@ -284,6 +284,11 @@ public class Robot extends IterativeRobot {
      */
 	public void autonomousPeriodic() {
 		
+		frontLeft.set(robot.getOutput(0));
+		rearLeft.set(robot.getOutput(0));
+		frontRight.set(robot.getOutput(1));
+		rearRight.set(robot.getOutput(1));
+		
 		if(start)//if this is the first time in the match that this autostep
 		{ 		 //is called
 			//Reset sensors
@@ -309,11 +314,11 @@ public class Robot extends IterativeRobot {
 			case "Basic Drive": //Just drive forward
 				
 				//UNTESTED
-				robot.arcadeDrive(0.5, 0);
+				robot.computeArcade(0.5, 0);
 				
 				if(t.get() > 1);
 				{
-					robot.arcadeDrive(0, 0);
+					robot.computeArcade(0, 0);
 					start = true;
 				}
 				
@@ -324,9 +329,9 @@ public class Robot extends IterativeRobot {
 				positionPID.setSetpoint(151.5*countsPerInch);
 				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(0/*encoder*/,t.get());
-				
-				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
 				//INCOMPLETE ^
+				robot.computeArcade(output, turningPID.computePID(ahrs.getAngle(), t.get()));
+				
 				if(output < 0.05)
 					start = true;
 				
@@ -334,7 +339,7 @@ public class Robot extends IterativeRobot {
 			case "Turn": //Turn 90 degrees
 				//UNTESTED
 				output = turningPID.computePID(ahrs.getAngle(),t.get());
-				robot.arcadeDrive(0, output);
+				robot.computeArcade(0, output);
 				
 				if(output < 0.05)
 					start = true;
@@ -343,7 +348,7 @@ public class Robot extends IterativeRobot {
 			case "Turn Opposite": //Turn 90 degrees in the other direction
 				//UNTESTED
 				output = turningPID.computePID(ahrs.getAngle(),t.get());
-				robot.arcadeDrive(0, output);
+				robot.computeArcade(0, output);
 				
 				if(output < 0.05)
 					start = true;
@@ -354,14 +359,14 @@ public class Robot extends IterativeRobot {
 				positionPID.setSetpoint(21.81*countsPerInch);
 				output = positionPID.coputePID(0/*encoder stuff*/, t.get());
 				
-				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(),t.get()));
+				robot.computeArcade(output, turningPID.computePID(ahrs.getAngle(),t.get()));
 				
 				if(output < 0.05)
 					start = true;
 				break;
 			case "Switch Place": //Turn and place cube
 				//UNTESTED
-				robot.arcadeDrive(0,0);
+				robot.computeArcade(0,0);
 				//place
 				
 				//when done
@@ -372,7 +377,7 @@ public class Robot extends IterativeRobot {
 				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(0/*encoder*/,t.get());
 				
-				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
+				robot.computeArcade(output, turningPID.computePID(ahrs.getAngle(), t.get()));
 				//INCOMPLETE need encoders ^
 				if(output < 0.05)
 					start = true;
@@ -383,7 +388,7 @@ public class Robot extends IterativeRobot {
 				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(0/*encoder*/,t.get());
 				
-				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
+				robot.computeArcade(output, turningPID.computePID(ahrs.getAngle(), t.get()));
 				//INCOMPLETE need encoders ^
 				if(output < 0.05)
 					start = true;
@@ -396,7 +401,7 @@ public class Robot extends IterativeRobot {
 				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(0/*encoder*/,t.get());
 				
-				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
+				robot.computeArcade(output, turningPID.computePID(ahrs.getAngle(), t.get()));
 				//INCOMPLETE need encoders ^
 				if(output < 0.05)
 					start = true;
@@ -410,7 +415,7 @@ public class Robot extends IterativeRobot {
 				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(0/*encoder*/,t.get());
 				
-				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
+				robot.computeArcade(output, turningPID.computePID(ahrs.getAngle(), t.get()));
 				//INCOMPLETE need encoders ^
 				if(output < 0.05)
 					start = true;
@@ -419,7 +424,7 @@ public class Robot extends IterativeRobot {
 			case "Done": //terminate auto
 				
 				//set all motors to not move
-				robot.arcadeDrive(0,0);
+				robot.computeArcade(0,0);
 				
 				break;
 		}
@@ -441,11 +446,11 @@ public class Robot extends IterativeRobot {
     public void teleopPeriodic() {
     	if(Math.abs(xBox.getRawAxis(1)) > 0.2 || Math.abs(xBox.getRawAxis(0)) > 0.2)
     	{
-    		robot.arcadeDrive(-xBox.getRawAxis(1), -xBox.getRawAxis(0));
+    		robot.computeArcade(-xBox.getRawAxis(1), -xBox.getRawAxis(0));
     	}
     	else
     	{
-    		robot.arcadeDrive(0, 0);
+    		robot.computeArcade(0, 0);
     	}
     	
     	SmartDashboard.putNumber("rightSide", rightSide.get());
