@@ -397,9 +397,9 @@ public class Robot extends IterativeRobot {
 			autoStep++;
 			autoCase = auto[autoID][autoStep];
 
-			if(autoCase == Turn)
+			if(autoCase == autoStates.Turn)
 				turnSetpoint+=(90/**turningMult*/);
-			else if(autoCase == TurnOpposite)
+			else if(autoCase == autoStates.TurnOpposite)
 				turnSetpoint-=(90/**turningMult*/);
 
 			//Disable initialization
