@@ -31,7 +31,7 @@ import edu.wpi.first.wpilibj.Victor;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj.vision.VisionThread;
-//                                2018 Bot Code// v1.2.2
+//                                2018 Bot Code// v1.2.2a
 /**
  *
  * The VM is configured to automatically run this class, and to call the
@@ -46,15 +46,15 @@ public class Robot extends IterativeRobot {
 	Joystick xBox;
 	
 	//MotorType kFrontLeft;
-	Talon frontLeft = new Talon(2);
-	Talon rearLeft = new Talon(3); 
-	Talon frontRight = new Talon(0); 
-	Talon rearRight = new Talon(1);
+	Talon frontLeft;
+	Talon rearLeft; 
+	Talon frontRight; 
+	Talon rearRight;
 	
 	AHRS ahrs;
 	double angleNow, scaledAngle; //the current angle and the angle to feed into the PID
 	
-	Timer t = new Timer();
+	Timer t;
 	
 	boolean start; //Whether or not we just started a case
 	int autoID;
@@ -88,6 +88,13 @@ public class Robot extends IterativeRobot {
     public void robotInit() {
     	robot = new SRF_Drive();
     	xBox = new Joystick(0);
+    	
+    	frontLeft = new Talon(2);
+    	rearLeft = new Talon(3); 
+    	frontRight = new Talon(0); 
+    	rearRight = new Talon(1);
+    	
+    	t = new Timer();
     	
     	//initialize choosers
     	placeCube = new SendableChooser();
@@ -143,13 +150,19 @@ public class Robot extends IterativeRobot {
     public void autonomousInit() {
     	//get switch/scale orientation
     	gameData = DriverStation.getInstance().getGameSpecificMessage();
-    	switchSide = gameData.charAt(0);
+    	try{
+    		switchSide = gameData.charAt(0);
+    	}
+    	catch(Exception ex)
+    	{
+    		System.out.println("Exception initializing:" + ex);
+    	}
     	scaleSide = gameData.charAt(1);
     	
     	start = true;//initialize variables
     	autoStep = -1;
     	
-	robot.initDrive();
+    	robot.initDrive();
 	    
     	//initialize potential autonomous steps
     	auto[0][0] = "Basic Drive";//drive forward and do nothing
