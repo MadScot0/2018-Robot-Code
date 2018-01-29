@@ -21,7 +21,7 @@ import edu.wpi.first.wpilibj.SPI;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
-//                                2018 Bot Code// v1.2.3
+//                                2018 Bot Code// v1.2.3a
 
 /**
  *
@@ -54,7 +54,6 @@ public class Robot extends IterativeRobot {
 	int autoID;
 
 // String autoCase; //the name of the current autonomous step
-// (PV see replacement on next line; also note autoStates is probably a better symbolic than autoCase )	
 
 	public enum autoStates { 	Done,
 						BasicDrive, DriveFarther,  							// Change "BasicDrive" to "DriveForward" or just "Drive"?
@@ -83,13 +82,11 @@ public class Robot extends IterativeRobot {
 	char scaleSide;  //side that is ours of the scale
 	char ourSide;    //the side that our robot is on on the field
 
-// (PV - see replacement, next line)	String[][] auto = new String[13][8]; //first number is autoID
-
-										 //second number is place in list, autoStep
+										 
 
 	autoStates	auto[][] = new autoStates[13][8];			// first index is autoID, second index is place in list (autoStep)
 	autoStates autoCase;
-	
+										//second number is place in list, autoStep
 	private SendableChooser placeCube; //Do we place a cube?
 	private SendableChooser startingLocation; //Where do we start?
 	private SendableChooser priorityType; //Decide based on side or scale/switch
@@ -100,11 +97,11 @@ public class Robot extends IterativeRobot {
 	SRF_PID positionPID;
 	SRF_PID turningPID;
 
-	Encoder rightSide;					// (PV) why not use both sides, at least as a fail safe check? Only downside is more CPU cycles
-										// for both encoder tracking (interrupts) and executing failsafe algorithm
+	Encoder rightSide;					
+										
 	double countsPerInch = 54.3249;
 	double output;
-	double turnSetpoint;				// (PV) Need position set point too?
+	double turnSetpoint;				
 
 
     public void robotInit() {
@@ -145,9 +142,9 @@ public class Robot extends IterativeRobot {
     	testMode.addObject("Standard Mode", 1);
     	testMode.addObject("Testing Mode", 2);
 
-    	testCase = new SendableChooser();				// This may not mesh with new enum without some translation logic assuming
-														// that SendableChooser only works with string data. Otherwise, just change data 
-														// being sent.
+    	testCase = new SendableChooser();				
+														
+														
  testCase.addDefault("Null", 0);					
     	testCase.addObject("Basic Drive", 5);
     	testCase.addObject("Initial Drive", 6);
@@ -320,7 +317,7 @@ public class Robot extends IterativeRobot {
     		ourSide = 'M';
 
     	//initiate autoID based on sendable chooser and field
-    	if((int) testMode.getSelected() == 2)				// (PV) if "Testing mode"
+    	if((int) testMode.getSelected() == 2)				//if "Testing mode"
     		autoID = (int) testCase.getSelected();
     	else if((int) placeCube.getSelected() == 2) //if we aren't planning on placing
     		autoID = 0;
@@ -363,8 +360,7 @@ public class Robot extends IterativeRobot {
     				else
     					autoID = 4;
     			}
-    			else // going to switch (PV) Logic error - there is a third priorityPlace possibility, i.e. Null
-										// so either check here for 1 (Switch) or for NOT 0 (Null)
+    			else // going to switch 
     			{
     				if(switchSide == ourSide)//if the switch is on our side
     					autoID = 1;
@@ -406,14 +402,7 @@ public class Robot extends IterativeRobot {
 			start = false;
 		}
 
-		switch(autoCase)				// (PV) For all of these cases, unless computeArcade is intended to do this, you will need a way
-										// to tell when the current step action is complete, and when it is, advance the state 
-										// (the autoStep index of your auto array in this case) so that the sequence of the current autoID 
-										// can continue.
-										// Also, if you later want to implement the third level of auto tasks (i.e. after placing the
-										// pre-loaded cube you want to pick up one (or more!) additional cube(s) from the floor
-										// beside our switch and do something with them), then you will either need to expand your
-										// auto array significantly for each of those possible actions, or (better) create a separate 
+		switch(autoCase)						// or (better) create a separate 
 										// staging monitor or "executive", and when any autoID is "Done", don't quit before calling that
 										// Executive so it can decide if a new autoID task should be started. That executive would 
 										// consider various factors: time left in auto? Do we control our switch? Do we control our Scale? 
@@ -521,7 +510,7 @@ public class Robot extends IterativeRobot {
 					start = true;
 				break;
 
-			case FarSwitchPlace: //Place the cube on the far switch  (PV) this was not a defined case option! Added it to the new enum
+			case FarSwitchPlace: //Place the cube on the far switch 
 				//code to do that
 				break;
 
