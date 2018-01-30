@@ -1,9 +1,9 @@
 package org.usfirst.frc.team3826.robot;
 
 import com.kauailabs.navx.frc.AHRS;
+
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.IterativeRobot;
-
 import edu.wpi.first.wpilibj.AnalogInput;
 import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.Encoder;
@@ -15,13 +15,12 @@ import edu.wpi.first.wpilibj.Relay;
 import edu.wpi.first.wpilibj.Talon;
 //import edu.wpi.first.wpilibj.TalonSRX;
 import edu.wpi.first.wpilibj.Victor;
-
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.SPI;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
-//                                2018 Bot Code// v1.2.3a
+//                                2018 Bot Code// v1.2.3a //add to GitHub
 
 /**
  *
@@ -55,8 +54,9 @@ public class Robot extends IterativeRobot {
 
 // String autoCase; //the name of the current autonomous step
 
+
 	public enum autoStates { 	Done,
-						BasicDrive, DriveFarther,  							// Change "BasicDrive" to "DriveForward" or just "Drive"?
+						BasicDrive, DriveFarther,  							
 						Turn, TurnOpposite, CrossField,
 						InitialDrive, SwitchApproach, SwitchPlace, FarSwitchPlace,	// FarSwitchInitial needed?
 						NearScaleInitial, ScaleApproach, ScalePlace,		// FarScaleInitial and FarScalePlace needed?
@@ -82,11 +82,9 @@ public class Robot extends IterativeRobot {
 	char scaleSide;  //side that is ours of the scale
 	char ourSide;    //the side that our robot is on on the field
 
-										 
-
 	autoStates	auto[][] = new autoStates[13][8];			// first index is autoID, second index is place in list (autoStep)
 	autoStates autoCase;
-										//second number is place in list, autoStep
+	
 	private SendableChooser placeCube; //Do we place a cube?
 	private SendableChooser startingLocation; //Where do we start?
 	private SendableChooser priorityType; //Decide based on side or scale/switch
@@ -117,36 +115,33 @@ public class Robot extends IterativeRobot {
 
     	//initialize choosers
     	placeCube = new SendableChooser();
-    	placeCube.addDefault("Null", 0);
-    	placeCube.addObject("Place Cube", 1);
+    	placeCube.addDefault("Place Cube", 1);
     	placeCube.addObject("Drive", 2);
+    	SmartDashboard.putData("placeCube", placeCube);
 
     	startingLocation = new SendableChooser();
-    	startingLocation.addDefault("Null", 0);
-    	startingLocation.addObject("Left", 1);
+    	startingLocation.addDefault("Left", 1);
     	startingLocation.addObject("Middle", 2);
     	startingLocation.addObject("Right", 3);
-
+    	SmartDashboard.putData("startingLocation", startingLocation);
+    	
     	priorityType = new SendableChooser();
-    	priorityType.addDefault("Null", 0);
-    	priorityType.addObject("Closest Side", 1);
+    	priorityType.addDefault("Closest Side", 1);
     	priorityType.addObject("Scale/Switch", 2);
+    	SmartDashboard.putData("priorityType", priorityType);
 
     	priorityPlace = new SendableChooser();
-    	priorityPlace.addDefault("Null", 0);
-    	priorityPlace.addObject("Switch", 1);
+    	priorityPlace.addDefault("Switch", 1);
     	priorityPlace.addObject("Scale", 2);
+    	SmartDashboard.putData("priorityPlace", priorityPlace);
 
     	testMode = new SendableChooser();
-    	testMode.addDefault("Null", 0);
-    	testMode.addObject("Standard Mode", 1);
+    	testMode.addDefault("Standard Mode", 1);
     	testMode.addObject("Testing Mode", 2);
+    	SmartDashboard.putData("testMode", testMode);
 
     	testCase = new SendableChooser();				
-														
-														
- testCase.addDefault("Null", 0);					
-    	testCase.addObject("Basic Drive", 5);
+    	testCase.addDefault("Basic Drive", 5);
     	testCase.addObject("Initial Drive", 6);
     	testCase.addObject("Near Switch Place", 7);
     	testCase.addObject("Drive Farther", 8);
@@ -154,7 +149,8 @@ public class Robot extends IterativeRobot {
     	testCase.addObject("Cross Field", 10);
     	testCase.addObject("Switch Place", 11);
     	testCase.addObject("Scale Place", 12);
-
+    	SmartDashboard.putData("testCase", testCase);
+    	
     	positionPID = new SRF_PID();
     	positionPID.setPID(0.002, 0.002, 0.002);
 
@@ -308,6 +304,18 @@ public class Robot extends IterativeRobot {
 		auto[12][6] = autoStates.NA;
 		auto[12][7] = autoStates.NA;
 	    
+		String a;
+		try{
+			System.out.println("Testing startingLocation");
+			Timer.delay(500);
+			
+			a = (String) startingLocation.getSelected();
+			System.out.println(a);
+		}
+		catch(Exception e){
+			System.out.println("Error at startingLocation:" + e);
+		}
+		
      	//initialize our Robot's location on the field
     	if((int) startingLocation.getSelected() == 1)
     		ourSide = 'L';
@@ -402,7 +410,7 @@ public class Robot extends IterativeRobot {
 			start = false;
 		}
 
-		switch(autoCase)						// or (better) create a separate 
+		switch(autoCase)				//create a separate 
 										// staging monitor or "executive", and when any autoID is "Done", don't quit before calling that
 										// Executive so it can decide if a new autoID task should be started. That executive would 
 										// consider various factors: time left in auto? Do we control our switch? Do we control our Scale? 
@@ -510,7 +518,7 @@ public class Robot extends IterativeRobot {
 					start = true;
 				break;
 
-			case FarSwitchPlace: //Place the cube on the far switch 
+			case FarSwitchPlace: //Place the cube on the far switch  (PV) this was not a defined case option! Added it to the new enum
 				//code to do that
 				break;
 
