@@ -99,7 +99,7 @@ public class Robot extends IterativeRobot {
 										
 	double countsPerInch = 54.3249;
 	double output;
-	double turnSetpoint;				
+	double turnSetpoint;	//the variable used to mirror our operations depending on robot placement			
 
 
     public void robotInit() { 	
