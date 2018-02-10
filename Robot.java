@@ -1,5 +1,9 @@
 package org.usfirst.frc.team3826.robot;
 
+import com.ctre.phoenix.motorcontrol.ControlMode;
+import com.ctre.phoenix.motorcontrol.FeedbackDevice;
+import com.ctre.phoenix.motorcontrol.can.TalonSRX;
+import com.ctre.phoenix.motorcontrol.can.*;
 import com.kauailabs.navx.frc.AHRS;
 
 import edu.wpi.first.wpilibj.DriverStation;
@@ -7,21 +11,19 @@ import edu.wpi.first.wpilibj.IterativeRobot;
 import edu.wpi.first.wpilibj.AnalogInput;
 import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.Encoder;
-import edu.wpi.first.wpilibj.IterativeRobot;
 import edu.wpi.first.wpilibj.Joystick;
 import edu.wpi.first.wpilibj.Relay;
 
 
 import edu.wpi.first.wpilibj.RobotDrive;
 import edu.wpi.first.wpilibj.Talon;
-//import edu.wpi.first.wpilibj.TalonSRX;
 import edu.wpi.first.wpilibj.Victor;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.SPI;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
-//                                2018 Bot Code// v1.2.3d
+//                                2018 Bot Code// v1.3
 
 /**
  *
@@ -32,19 +34,28 @@ import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
  * directory.
  */
 
-
+@SuppressWarnings("deprecation")
 
 public class Robot extends IterativeRobot {
 
-	RobotDrive robot;
+    RobotDrive robot;
 	Joystick xBox;
 
-	//MotorType kFrontLeft;
+	//MotorType kFrontLeft;//
 	Talon frontLeft;
 	Talon rearLeft; 
 	Talon frontRight; 
 	Talon rearRight;
 
+	Victor intakeL;
+	Victor intakeR;
+	
+	Victor hook;
+	Victor winch;
+	
+	TalonSRX elevator;
+	TalonSRX wrist;
+	
 	AHRS ahrs;
 
 	double angleNow, scaledAngle; //the current angle and the angle to feed into the PID
@@ -98,24 +109,52 @@ public class Robot extends IterativeRobot {
 	SRF_PID positionPID;
 	SRF_PID turningPID;
 
-	Encoder rightSide;					
+	Encoder rightSide;
 										
 	double countsPerInch = 54.3249;
 	double output;
 	double turnSetpoint;				
 	double turningMult;    //the variable used to mirror our operations depending on robot placement
-
-    @SuppressWarnings("deprecation")
+	
+	int targetWristPos; //variable for where the wrtist will move to
+	boolean letUp7;
+	boolean letUp8;
+	
 	public void robotInit() { 
-    	
+		
+		targetWristPos = 0;
+		letUp7 = true;
+		letUp8 = true;
+		
+		hook = new Victor(4);
+		winch = new Victor(7);
+		
+		
+		elevator = new TalonSRX(2);
+		elevator.configSelectedFeedbackSensor(FeedbackDevice.QuadEncoder, 0, 0);
+		elevator.config_kP(0, 0.5, 5);//first argument is slotIdx
+		elevator.config_kI(0, 0, 0);
+		elevator.config_kD(0, 0, 0);
+		
+		wrist = new TalonSRX(1);
+		wrist.configSelectedFeedbackSensor(FeedbackDevice.QuadEncoder, 0, 0);
+		wrist.config_kP(0, 0.02, 5);//first argument is slotIdx
+		wrist.config_kI(0, 0.0, 0);
+		wrist.config_kD(0, 0, 0);
+		
+		intakeL = new Victor(5);
+		intakeR = new Victor(6);
+		
     	frontLeft = new Talon(2);
     	rearLeft = new Talon(3); 
     	frontRight = new Talon(0); 
     	rearRight = new Talon(1);
     	
-    	 robot = new RobotDrive(frontLeft, rearLeft, frontRight, rearRight);
+    	robot = new RobotDrive(frontLeft, rearLeft, frontRight, rearRight);
     	xBox = new Joystick(0);
 
+    	ahrs = new AHRS(SPI.Port.kMXP);
+    	
     	t = new Timer();
 
     	//initialize choosers
@@ -170,6 +209,7 @@ public class Robot extends IterativeRobot {
      */
 
     public void autonomousInit() {
+    	System.out.println("Starting Init");
     	//get switch/scale orientation
     	gameData = DriverStation.getInstance().getGameSpecificMessage();
 
@@ -186,7 +226,6 @@ public class Robot extends IterativeRobot {
 
     	start = true;   //initialize variables
     	autoStep = -1;
-    	
 
     	//initialize potential autonomous steps
     	auto[0][0] = autoStates.BasicDrive;	//drive forward and do nothing
@@ -237,21 +276,21 @@ public class Robot extends IterativeRobot {
     	//testing sequences
     	auto[5][0] = autoStates.BasicDrive;
     	auto[5][1] = autoStates.Done;
-		auto[0][2] = autoStates.NA;
-		auto[0][3] = autoStates.NA;
-		auto[0][4] = autoStates.NA;
-		auto[0][5] = autoStates.NA;
-		auto[0][6] = autoStates.NA;
-		auto[0][7] = autoStates.NA;
+		auto[5][2] = autoStates.NA;
+		auto[5][3] = autoStates.NA;
+		auto[5][4] = autoStates.NA;
+		auto[5][5] = autoStates.NA;
+		auto[5][6] = autoStates.NA;
+		auto[5][7] = autoStates.NA;
 		
     	auto[6][0] = autoStates.InitialDrive;
     	auto[6][1] = autoStates.Done;
-		auto[0][2] = autoStates.NA;
-		auto[0][3] = autoStates.NA;
-		auto[0][4] = autoStates.NA;
-		auto[0][5] = autoStates.NA;
-		auto[0][6] = autoStates.NA;
-		auto[0][7] = autoStates.NA;
+		auto[6][2] = autoStates.NA;
+		auto[6][3] = autoStates.NA;
+		auto[6][4] = autoStates.NA;
+		auto[6][5] = autoStates.NA;
+		auto[6][6] = autoStates.NA;
+		auto[6][7] = autoStates.NA;
 		
     	auto[7][0] = autoStates.Turn;
     	auto[7][1] = autoStates.SwitchApproach;
@@ -308,18 +347,7 @@ public class Robot extends IterativeRobot {
 		auto[12][5] = autoStates.NA;
 		auto[12][6] = autoStates.NA;
 		auto[12][7] = autoStates.NA;
-	    
-		String a;
-		try{
-			System.out.println("Testing startingLocation");
-			Timer.delay(500);
-			
-			a = (String) startingLocation.getSelected();
-			System.out.println(a);
-		}
-		catch(Exception e){
-			System.out.println("Error at startingLocation:" + e);
-		}
+	 
 		
      	//initialize our Robot's location on the field
     	if((int) startingLocation.getSelected() == 1)
@@ -387,17 +415,24 @@ public class Robot extends IterativeRobot {
     		turningMult = -1;
     	else
     		turningMult = 1;
+    	
+    	//reset navX board
+    	ahrs.reset();
+    	
+    	System.out.println("init end");
     }
 
     /**
      * This function is called periodically during autonomous
      */
 
-	public void autonomousPeriodic() {
-		
+	public void autonomousPeriodic()
+	{
+	System.out.println("periodic top");
 		if(start)//if this is the first time in the match that this autostep
 		{ 		 //is called
 			//Reset sensors
+			System.out.println("Start begin");
 			t.reset();
 
 			//reset encoders
@@ -413,6 +448,7 @@ public class Robot extends IterativeRobot {
 
 			//Disable initialization
 			start = false;
+			System.out.println(autoCase);
 		}
 
 		switch(autoCase)				//create a separate 
@@ -428,27 +464,33 @@ public class Robot extends IterativeRobot {
 				 robot.arcadeDrive(0.5,0);
 				if(t.get() > 1);
 				{
-					 robot.arcadeDrive(0,0);
+					robot.arcadeDrive(0,0);
 					start = true;
 				}
 				break;
 			case InitialDrive: //Drive forward on the side and get ready to place
 				//UNTESTED
+				//System.out.println("Beginning Case");
 				positionPID.setSetpoint(151.5*countsPerInch);
 				turningPID.setSetpoint(turnSetpoint);
+				//System.out.println("Setpoints Set");
 				output = positionPID.computePID(rightSide.get(),t.get());
+				System.out.println("Output Computed:"+output);
+				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
 				
-				 robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
 				if(output < 0.05)
 					start = true;
 				break;
-
 			case Turn: //Turn 90 degrees
-				//UNTESTED
+				//UNTESTED//
+				System.out.println("Beginning");
 				output = turningPID.computePID(ahrs.getAngle(),t.get());
-				 robot.arcadeDrive(0, output);
+				System.out.println("PID computed");
+				robot.arcadeDrive(0, output);
+				System.out.println("Arcade Called");
 				if(output < 0.05)
 					start = true;
+				System.out.println("Done");
 				break;
 
 			case TurnOpposite: //Turn 90 degrees in the other direction
@@ -533,7 +575,8 @@ public class Robot extends IterativeRobot {
      * This function is called once each time the robot enters teleoperated mode
      */
 
-    public void teleopInit(){
+    public void teleopInit()
+    {
     	rightSide.reset();
     }
 
@@ -546,7 +589,9 @@ public class Robot extends IterativeRobot {
      * @see edu.wpi.first.wpilibj.IterativeRobot#teleopPeriodic()
      */
 
-    public void teleopPeriodic() {
+    public void teleopPeriodic()
+    {
+    	
     	if(Math.abs(xBox.getRawAxis(1)) > 0.2 || Math.abs(xBox.getRawAxis(0)) > 0.2)
     	{
     		 robot.arcadeDrive(-xBox.getRawAxis(1), -xBox.getRawAxis(0));
@@ -556,7 +601,74 @@ public class Robot extends IterativeRobot {
     		 robot.arcadeDrive(0,0);
     	}
     	
+    	
+    	//cube intake
+    	if(xBox.getRawButton(1))//intake
+    	{
+    		intakeL.set(-.5);
+    		intakeR.set(-.5);
+    	}
+    	else if(xBox.getRawButton(2))//eject
+    	{
+    		intakeL.set(.5);
+    		intakeR.set(.5);
+    	}
+    	else
+    	{
+    		intakeL.set(0);
+    		intakeR.set(0);
+    	}
+    	
+    	
+    	//test wrist code//
+    	if(xBox.getRawButton(7) && letUp7)
+    	{
+    		letUp7 = false;
+    		targetWristPos+=10;
+    	}
+    	else if(xBox.getRawButton(8) && letUp8)
+    	{
+    		letUp8 = false;
+    		targetWristPos-=10;
+    	}
+    	
+    	if(!xBox.getRawButton(7))
+    		letUp7 = true;
+    	
+    	if(!xBox.getRawButton(8))
+    		letUp8 = true;
+    	
+    	if(targetWristPos < 0)
+    		targetWristPos = 0;
+    	
+    	wrist.set(ControlMode.Position, targetWristPos);
+    	
+    	//Elevator code
+    	/*if(Math.abs(xBox.getRawAxis(4)) > 0.2 && Math.abs(xBox.getRawAxis(4)) < 0.6)
+    		elevator.set(ControlMode.PercentOutput, xBox.getRawAxis(4));
+    	else if(Math.abs(xBox.getRawAxis(4)) >= 0.6)
+    		elevator.set(ControlMode.PercentOutput, 0.6);
+    	else
+    		elevator.set(ControlMode.PercentOutput, 0);*/
+    	
+    	
+    	//hook code
+    /*	if(Math.abs(xBox.getRawAxis(5)) > 0.2) //right stick y-axis
+    		hook.set(xBox.getRawAxis(5));
+    	else
+    		hook.set(0);
+    	*/
+    	
+    	//winch code
+    	if(xBox.getRawButton(5)) //LB - wind out
+    		winch.set(0.5);
+    	else if(xBox.getRawButton(6)) //RB - wind in
+    		winch.set(-0.5);
+    	else
+    		winch.set(0);
+    	
     	SmartDashboard.putNumber("rightSide", rightSide.get());
+    	SmartDashboard.putNumber("targetWristPos", targetWristPos);
     }
 
     
