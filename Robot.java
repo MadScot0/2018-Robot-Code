@@ -23,7 +23,7 @@ import edu.wpi.first.wpilibj.SPI;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
-//                                2018 Bot Code// v1.3
+//                                2018 Bot Code// v1.3.1
 
 /**
  *
@@ -116,15 +116,12 @@ public class Robot extends IterativeRobot {
 	double turnSetpoint;				
 	double turningMult;    //the variable used to mirror our operations depending on robot placement
 	
-	int targetWristPos; //variable for where the wrtist will move to
+	int targetWristPos; //variable for where the wrist will move to
+	int targetElevatorPos; //variable for where the elevator will move to
 	boolean letUp7;
 	boolean letUp8;
 	
 	public void robotInit() { 
-		
-		targetWristPos = 0;
-		letUp7 = true;
-		letUp8 = true;
 		
 		hook = new Victor(4);
 		winch = new Victor(7);
@@ -132,15 +129,15 @@ public class Robot extends IterativeRobot {
 		
 		elevator = new TalonSRX(2);
 		elevator.configSelectedFeedbackSensor(FeedbackDevice.QuadEncoder, 0, 0);
-		elevator.config_kP(0, 0.5, 5);//first argument is slotIdx
-		elevator.config_kI(0, 0, 0);
-		elevator.config_kD(0, 0, 0);
+		elevator.config_kP(0, 0.004, 10);//first argument is slotIdx
+		elevator.config_kI(0, 0, 10);
+		elevator.config_kD(0, 0.0001, 10);
 		
 		wrist = new TalonSRX(1);
 		wrist.configSelectedFeedbackSensor(FeedbackDevice.QuadEncoder, 0, 0);
-		wrist.config_kP(0, 0.02, 5);//first argument is slotIdx
-		wrist.config_kI(0, 0.0, 0);
-		wrist.config_kD(0, 0, 0);
+		wrist.config_kP(0, 0.01, 10);//first argument is slotIdx
+		wrist.config_kI(0, 0.000, 10);
+		wrist.config_kD(0, 0.0000, 10);
 		
 		intakeL = new Victor(5);
 		intakeR = new Victor(6);
@@ -419,6 +416,11 @@ public class Robot extends IterativeRobot {
     	//reset navX board
     	ahrs.reset();
     	
+    	wrist.setSelectedSensorPosition(0, 0, 0);
+    	elevator.setSelectedSensorPosition(0, 0, 0);
+    	targetWristPos = 0;
+    	targetElevatorPos = 0;
+    	
     	System.out.println("init end");
     }
 
@@ -429,8 +431,8 @@ public class Robot extends IterativeRobot {
 	public void autonomousPeriodic()
 	{
 	System.out.println("periodic top");
-		if(start)//if this is the first time in the match that this autostep
-		{ 		 //is called
+		if(start)//just starting into this loop
+		{ 		 
 			//Reset sensors
 			System.out.println("Start begin");
 			t.reset();
@@ -530,11 +532,11 @@ public class Robot extends IterativeRobot {
 				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(rightSide.get(),t.get());
 
-				 robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
+				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
 				if(output < 0.05)
 					start = true;
+				
 				break;
-
 			case ScalePlace: //place a cube on the scale
 				break;
 			case CrossField: //Travel across the field
@@ -543,7 +545,7 @@ public class Robot extends IterativeRobot {
 				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(rightSide.get(),t.get());
 
-				 robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
+				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
 				if(output < 0.05)
 					start = true;
 				break;
@@ -578,6 +580,13 @@ public class Robot extends IterativeRobot {
     public void teleopInit()
     {
     	rightSide.reset();
+    	wrist.setSelectedSensorPosition(0, 0, 0);
+    	elevator.setSelectedSensorPosition(0, 0, 0);
+    	targetWristPos = 0;
+    	targetElevatorPos = 0;
+		letUp7 = true;
+		letUp8 = true;
+		wrist.set(ControlMode.Position, 0);
     }
 
 
@@ -593,22 +602,18 @@ public class Robot extends IterativeRobot {
     {
     	
     	if(Math.abs(xBox.getRawAxis(1)) > 0.2 || Math.abs(xBox.getRawAxis(0)) > 0.2)
-    	{
     		 robot.arcadeDrive(-xBox.getRawAxis(1), -xBox.getRawAxis(0));
-    	}
     	else
-    	{
     		 robot.arcadeDrive(0,0);
-    	}
     	
     	
     	//cube intake
-    	if(xBox.getRawButton(1))//intake
+    	if(xBox.getRawAxis(2) > 0.2)//intake
     	{
     		intakeL.set(-.5);
     		intakeR.set(-.5);
     	}
-    	else if(xBox.getRawButton(2))//eject
+    	else if(xBox.getRawAxis(3) > 0.2)//eject
     	{
     		intakeL.set(.5);
     		intakeR.set(.5);
@@ -621,35 +626,33 @@ public class Robot extends IterativeRobot {
     	
     	
     	//test wrist code//
-    	if(xBox.getRawButton(7) && letUp7)
-    	{
-    		letUp7 = false;
-    		targetWristPos+=10;
-    	}
-    	else if(xBox.getRawButton(8) && letUp8)
-    	{
-    		letUp8 = false;
-    		targetWristPos-=10;
-    	}
-    	
-    	if(!xBox.getRawButton(7))
-    		letUp7 = true;
-    	
-    	if(!xBox.getRawButton(8))
-    		letUp8 = true;
-    	
-    	if(targetWristPos < 0)
+    	if(xBox.getRawButton(8))
     		targetWristPos = 0;
+    	else if(xBox.getRawButton(7))
+    		targetWristPos = -106500;
     	
     	wrist.set(ControlMode.Position, targetWristPos);
     	
+    	
     	//Elevator code
-    	/*if(Math.abs(xBox.getRawAxis(4)) > 0.2 && Math.abs(xBox.getRawAxis(4)) < 0.6)
+    	if(xBox.getRawButton(4))//Y
+   			targetElevatorPos = -1500000;//go to top
+    	else if(xBox.getRawButton(1))//A
+    		targetElevatorPos = 0; //go to bottom
+    	
+  /*  	if(Math.abs(xBox.getRawAxis(4)) > 0.2 && Math.abs(xBox.getRawAxis(4)) < 0.6)
     		elevator.set(ControlMode.PercentOutput, xBox.getRawAxis(4));
-    	else if(Math.abs(xBox.getRawAxis(4)) >= 0.6)
+    	else if(xBox.getRawAxis(4) > 0.6)
     		elevator.set(ControlMode.PercentOutput, 0.6);
+    	else if(xBox.getRawAxis(4) < -0.6)
+    		elevator.set(ControlMode.PercentOutput, -0.6);
     	else
-    		elevator.set(ControlMode.PercentOutput, 0);*/
+    */		elevator.set(ControlMode.Position, targetElevatorPos);
+    	
+    	
+    	if(xBox.getRawButton(2))//B
+    		elevator.setSelectedSensorPosition(0, 0, 0);
+    	
     	
     	
     	//hook code
@@ -659,14 +662,16 @@ public class Robot extends IterativeRobot {
     		hook.set(0);
     	*/
     	
-    	//winch code
+    	   	//winch code
     	if(xBox.getRawButton(5)) //LB - wind out
     		winch.set(0.5);
     	else if(xBox.getRawButton(6)) //RB - wind in
     		winch.set(-0.5);
     	else
     		winch.set(0);
-    	
+    		
+    	SmartDashboard.putNumber("Elevator Position", elevator.getSelectedSensorPosition(0));
+    	SmartDashboard.putNumber("Wrist Position", wrist.getSelectedSensorPosition(0));
     	SmartDashboard.putNumber("rightSide", rightSide.get());
     	SmartDashboard.putNumber("targetWristPos", targetWristPos);
     }
