@@ -2,7 +2,6 @@ package org.usfirst.frc.team3826.robot;
 
 import com.ctre.phoenix.motorcontrol.ControlMode;
 import com.ctre.phoenix.motorcontrol.FeedbackDevice;
-import com.ctre.phoenix.motorcontrol.can.TalonSRX;
 import com.ctre.phoenix.motorcontrol.can.*;
 import com.kauailabs.navx.frc.AHRS;
 
@@ -12,6 +11,7 @@ import edu.wpi.first.wpilibj.AnalogInput;
 import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.Encoder;
 import edu.wpi.first.wpilibj.Joystick;
+import edu.wpi.first.wpilibj.PWMTalonSRX;
 import edu.wpi.first.wpilibj.Relay;
 
 
@@ -23,9 +23,9 @@ import edu.wpi.first.wpilibj.SPI;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
-//                                2018 Bot Code// v1.3.1a
-
-/**
+//                                2018 Bot Code// v1.3.1b //improved auto
+													//started tuning SRF pids
+/**						
  *
  * The VM is configured to automatically run this class, and to call the
  * functions corresponding to each mode, as described in the IterativeRobot
@@ -37,7 +37,7 @@ import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 @SuppressWarnings("deprecation")
 
 public class Robot extends IterativeRobot {
-
+	
     RobotDrive robot;
 	Joystick xBox;
 
@@ -64,8 +64,11 @@ public class Robot extends IterativeRobot {
 	boolean start; //Whether or not we just started a case
 
 	int autoID;
+	double turnSetpoint;
 
-// String autoCase; //the name of the current autonomous step
+	
+	double timeNow;
+	boolean firstSample;
 
 
 	public enum autoStates { 	Done,
@@ -95,7 +98,7 @@ public class Robot extends IterativeRobot {
 	char scaleSide;  //side that is ours of the scale
 	char ourSide;    //the side that our robot is on on the field
 
-	autoStates	auto[][] = new autoStates[13][8];			// first index is autoID, second index is place in list (autoStep)
+	autoStates	auto[][] = new autoStates[17][8];			// first index is autoID, second index is place in list (autoStep)
 	autoStates autoCase;
 	
 	private SendableChooser placeCube; //Do we place a cube?
@@ -111,8 +114,7 @@ public class Robot extends IterativeRobot {
 	Encoder rightSide;
 										
 	double countsPerInch = 54.3249;
-	double output;
-	double turnSetpoint;				
+	double output;		
 	double turningMult;    //the variable used to mirror our operations depending on robot placement
 	
 	int targetWristPos; //variable for where the wrist will move to
@@ -124,6 +126,9 @@ public class Robot extends IterativeRobot {
 	double upWristP = 0.005, upWristI = 0.00000175, upWristD = 0.001;
 	double downWristP = 0.003, downWristI = 0.000000015, downWristD = 0.001;
 	
+	int elevatorUp = -1600000, elevatorMid = -475000, elevatorDown = -20000;
+	int wristUp = 0, wristDown = -106500;
+	
 	public void robotInit() { 
 		
 		hook = new Victor(4);
@@ -132,16 +137,16 @@ public class Robot extends IterativeRobot {
 		
 		elevator = new TalonSRX(2);
 		elevator.configSelectedFeedbackSensor(FeedbackDevice.QuadEncoder, 0, 0);
-		elevator.config_kP(0, downElevatorP, 10);//first argument is slotIdx
-		elevator.config_kI(0, downElevatorI, 10);
-		elevator.config_kD(0, downElevatorD, 10);
+		elevator.config_kP(0, upElevatorP, 10);//first argument is slotIdx
+		elevator.config_kI(0, upElevatorI, 10);
+		elevator.config_kD(0, upElevatorD, 10);
 		
 		
 		wrist = new TalonSRX(1);
 		wrist.configSelectedFeedbackSensor(FeedbackDevice.QuadEncoder, 0, 0);
-		wrist.config_kP(0, upWristP, 10);//first argument is slotIdx
-		wrist.config_kI(0, upWristI, 10);
-		wrist.config_kD(0, upWristD, 10);
+		wrist.config_kP(0, downWristP, 10);//first argument is slotIdx
+		wrist.config_kI(0, downWristI, 10);
+		wrist.config_kD(0, downWristD, 10);
 		
 	
 		intakeL = new Victor(5);
@@ -189,22 +194,28 @@ public class Robot extends IterativeRobot {
 
     	testCase = new SendableChooser();				
     	testCase.addDefault("Basic Drive", 5);
-    	testCase.addObject("Initial Drive", 6);
-    	testCase.addObject("Near Switch Place", 7);
-    	testCase.addObject("Drive Farther", 8);
-    	testCase.addObject("Near Scale Place", 9);
-    	testCase.addObject("Cross Field", 10);
-    	testCase.addObject("Switch Place", 11);
-    	testCase.addObject("Scale Place", 12);
+    	testCase.addObject("Initial Drive", 6);//
+    	testCase.addObject("Turn", 7);
+    	testCase.addObject("Turn Opposite", 8);
+    	testCase.addObject("Switch Approach", 9);
+    	testCase.addObject("Switch Place", 10);
+    	testCase.addObject("Drive Farther", 11);
+    	testCase.addObject("Near Scale Initial", 12);
+    	testCase.addObject("Scale Place", 13);
+    	testCase.addObject("Cross Field", 14);
+    	testCase.addObject("Far Switch Place", 15);
+    	testCase.addObject("Scale Approach", 16);
     	SmartDashboard.putData("testCase", testCase);
     	
     	positionPID = new SRF_PID();
-    	positionPID.setPID(0.002, 0.002, 0.002);
+    	positionPID.setPID(0.002, 0, 0);
 
     	turningPID = new SRF_PID();
-    	turningPID.setPID(0.02, 0.02, 0.2);
+    	turningPID.setReverse(true);
+    	turningPID.setPID(1.5, .75, .45);
 
     	rightSide = new Encoder(0, 1);
+    	System.out.println("End Robot Init");
     }
 
     /**
@@ -212,10 +223,11 @@ public class Robot extends IterativeRobot {
      */
 
     public void autonomousInit() {
-    	System.out.println("Starting Init");
+    	System.out.println("start auto init");
     	//get switch/scale orientation
     	gameData = DriverStation.getInstance().getGameSpecificMessage();
 
+    	
     	try
     	{
     		switchSide = gameData.charAt(0);
@@ -229,11 +241,11 @@ public class Robot extends IterativeRobot {
 
     	start = true;   //initialize variables
     	autoStep = -1;
-
+    	System.out.println(237);
     	//initialize potential autonomous steps
     	auto[0][0] = autoStates.BasicDrive; //drive forward over the auto line
     	auto[0][1] = autoStates.Done;
-		auto[0][2] = autoStates.NA;
+		auto[0][2] = autoStates.NA;//
 		auto[0][3] = autoStates.NA;
 		auto[0][4] = autoStates.NA;
 		auto[0][5] = autoStates.NA;
@@ -254,8 +266,8 @@ public class Robot extends IterativeRobot {
     	auto[2][2] = autoStates.Turn; //adjust
     	auto[2][3] = autoStates.Turn;
     	auto[2][4] = autoStates.SwitchApproach;
-    	auto[2][5] = autoStates.Done;
-		auto[2][6] = autoStates.NA;
+    	auto[2][5] = autoStates.SwitchPlace;
+		auto[2][6] = autoStates.Done;
 		auto[2][7] = autoStates.NA;
 		
     	auto[3][0] = autoStates.NearScaleInitial;//place cube on near scale platform
@@ -286,7 +298,7 @@ public class Robot extends IterativeRobot {
 		auto[5][6] = autoStates.NA;
 		auto[5][7] = autoStates.NA;
 		
-    	auto[6][0] = autoStates.InitialDrive; //Does nothing + error no robot code running
+    	auto[6][0] = autoStates.InitialDrive;
     	auto[6][1] = autoStates.Done;
 		auto[6][2] = autoStates.NA;
 		auto[6][3] = autoStates.NA;
@@ -295,18 +307,16 @@ public class Robot extends IterativeRobot {
 		auto[6][6] = autoStates.NA;
 		auto[6][7] = autoStates.NA;
 		
-    	auto[7][0] = autoStates.Turn; //The state "NA" has been reached
-    	auto[7][1] = autoStates.SwitchApproach;
-    	auto[7][2] = autoStates.SwitchPlace;
-    	auto[7][3] = autoStates.Done;
-		auto[7][2] = autoStates.NA;
-		auto[7][3] = autoStates.NA;
+    	auto[7][0] = autoStates.Turn;
+    	auto[7][1] = autoStates.Done;
+    	auto[7][2] = autoStates.NA;
+    	auto[7][3] = autoStates.NA;
 		auto[7][4] = autoStates.NA;
 		auto[7][5] = autoStates.NA;
 		auto[7][6] = autoStates.NA;
 		auto[7][7] = autoStates.NA;
 		
-    	auto[8][0] = autoStates.DriveFarther; //Does nothing
+    	auto[8][0] = autoStates.TurnOpposite;
     	auto[8][1] = autoStates.Done;
 		auto[8][2] = autoStates.NA;
 		auto[8][3] = autoStates.NA;
@@ -315,16 +325,16 @@ public class Robot extends IterativeRobot {
 		auto[8][6] = autoStates.NA;
 		auto[8][7] = autoStates.NA;
 		
-    	auto[9][0] = autoStates.NearScaleInitial;//does nothing until scale place
-    	auto[9][1] = autoStates.Turn;
-    	auto[9][2] = autoStates.ScaleApproach;
-    	auto[9][3] = autoStates.ScalePlace; //RobotDrive Output not updated often enough
-    	auto[9][4] = autoStates.Done;
+    	auto[9][0] = autoStates.SwitchApproach;
+    	auto[9][1] = autoStates.Done;
+    	auto[9][2] = autoStates.NA;
+    	auto[9][3] = autoStates.NA; 
+    	auto[9][4] = autoStates.NA;
 		auto[9][5] = autoStates.NA;
 		auto[9][6] = autoStates.NA;
 		auto[9][7] = autoStates.NA;
 		
-    	auto[10][0] = autoStates.CrossField; //does nothing
+    	auto[10][0] = autoStates.SwitchPlace;
     	auto[10][1] = autoStates.Done;
 		auto[10][2] = autoStates.NA;
 		auto[10][3] = autoStates.NA;
@@ -333,8 +343,8 @@ public class Robot extends IterativeRobot {
 		auto[10][6] = autoStates.NA;
 		auto[10][7] = autoStates.NA;
 		
-    	auto[11][0] = autoStates.SwitchPlace; //gets into SwitchPlace and stops
-    	auto[11][1] = autoStates.Done; 		  //updating
+    	auto[11][0] = autoStates.DriveFarther; 
+    	auto[11][1] = autoStates.Done; 		  
 		auto[11][2] = autoStates.NA;
 		auto[11][3] = autoStates.NA;
 		auto[11][4] = autoStates.NA;
@@ -342,7 +352,7 @@ public class Robot extends IterativeRobot {
 		auto[11][6] = autoStates.NA;
 		auto[11][7] = autoStates.NA;
 		
-    	auto[12][0] = autoStates.ScalePlace; //RD output not updated often enough
+    	auto[12][0] = autoStates.NearScaleInitial; 
     	auto[12][1] = autoStates.Done;
 		auto[12][2] = autoStates.NA;
 		auto[12][3] = autoStates.NA;
@@ -351,6 +361,41 @@ public class Robot extends IterativeRobot {
 		auto[12][6] = autoStates.NA;
 		auto[12][7] = autoStates.NA;
 	 
+		auto[13][0] = autoStates.ScalePlace; 
+    	auto[13][1] = autoStates.Done;
+		auto[13][2] = autoStates.NA;
+		auto[13][3] = autoStates.NA;
+		auto[13][4] = autoStates.NA;
+		auto[13][5] = autoStates.NA;
+		auto[13][6] = autoStates.NA;
+		auto[13][7] = autoStates.NA;
+		
+		auto[14][0] = autoStates.CrossField; 
+    	auto[14][1] = autoStates.Done;
+		auto[14][2] = autoStates.NA;
+		auto[14][3] = autoStates.NA;
+		auto[14][4] = autoStates.NA;
+		auto[14][5] = autoStates.NA;
+		auto[14][6] = autoStates.NA;
+		auto[14][7] = autoStates.NA;
+		
+		auto[15][0] = autoStates.FarSwitchPlace; 
+    	auto[15][1] = autoStates.Done;
+		auto[15][2] = autoStates.NA;
+		auto[15][3] = autoStates.NA;
+		auto[15][4] = autoStates.NA;
+		auto[15][5] = autoStates.NA;
+		auto[15][6] = autoStates.NA;
+		auto[15][7] = autoStates.NA;
+		
+		auto[16][0] = autoStates.ScaleApproach; 
+    	auto[16][1] = autoStates.Done;
+		auto[16][2] = autoStates.NA;
+		auto[16][3] = autoStates.NA;
+		auto[16][4] = autoStates.NA;
+		auto[16][5] = autoStates.NA;
+		auto[16][6] = autoStates.NA;
+		auto[16][7] = autoStates.NA;
 		
      	//initialize our Robot's location on the field
     	if((int) startingLocation.getSelected() == 1)
@@ -359,7 +404,8 @@ public class Robot extends IterativeRobot {
     		ourSide = 'R';
     	else
     		ourSide = 'M';
-
+    	
+    	System.out.println(400);
     	//initiate autoID based on sendable chooser and field
     	if((int) testMode.getSelected() == 2)				//if "Testing mode"
     		autoID = (int) testCase.getSelected();
@@ -376,7 +422,7 @@ public class Robot extends IterativeRobot {
     					autoID = 1;
     				else					 // go for the scale on our side
     					autoID = 3;
-    			}
+    			}//
     			else // the plates share a side
     			{
     				if((int) priorityPlace.getSelected() == 2) //if going to scale
@@ -419,14 +465,14 @@ public class Robot extends IterativeRobot {
     	else
     		turningMult = 1;
     	
+    	ahrs.reset();
     	rightSide.reset();
-    	
+    	System.out.println(461);
     	wrist.setSelectedSensorPosition(0, 0, 0);
     	elevator.setSelectedSensorPosition(0, 0, 0);
     	targetWristPos = 0;
     	targetElevatorPos = 0;
-    	
-    	System.out.println("init end");
+    	System.out.println("end autoInit");
     }
 
     /**
@@ -450,10 +496,23 @@ public class Robot extends IterativeRobot {
 			autoCase = auto[autoID][autoStep];
 
 			if(autoCase == autoStates.Turn)
-				turnSetpoint+=(90*turningMult);
+			{
+				turningPID.setSetpoint(90);
+				turnSetpoint = 90;
+			}
 			else if(autoCase == autoStates.TurnOpposite)
-				turnSetpoint-=(90*turningMult);
+			{
+				turningPID.setSetpoint(-90);
+				turnSetpoint = -90;
+			}
+			else
+			{
+				turningPID.setSetpoint(0);
+				turnSetpoint = 0;
+			}
 
+			firstSample = true;
+			
 			//Disable initialization
 			start = false;
 			System.out.println(autoCase);
@@ -467,7 +526,7 @@ public class Robot extends IterativeRobot {
 										// flags that it needs to, and return. This switch/case then continues to serve, sequencing
 										// though the steps of the specific autoID that the executive decided to try for.
 		{
-			case BasicDrive: //Just drive forward
+			case BasicDrive: //Just drive forward//
 				robot.arcadeDrive(-0.5,0);
 				if(t.get() > 2)
 				{
@@ -479,30 +538,27 @@ public class Robot extends IterativeRobot {
 			case InitialDrive: //Drive forward on the side and get ready to place
 				System.out.println("480:"+rightSide.get());//UNTESTED
 				positionPID.setSetpoint(151.5*countsPerInch);
-				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(rightSide.get(),t.get());
 				System.out.println("Output Computed:"+output);
 				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
 				
-				if(output < 0.05 && t.get() > 0.5)//add turning output
+				if(output < 0.03 && t.get() > 1)//add turning output?
 					start = true;
 				break;
 			case Turn: //Turn 90 degrees
-				//UNTESTED//
-				System.out.println("Beginning");
+				//UNTESTED
 				output = turningPID.computePID(ahrs.getAngle(),t.get());
-				System.out.println("PID computed");
 				robot.arcadeDrive(0, output);
-				System.out.println("Arcade Called");
-				if(output < 0.05)
+				System.out.println(output);
+				System.out.println(ahrs.getAngle());
+				if(Math.abs(ahrs.getAngle() - turnSetpoint) < 1 && output < 0.03)
 					start = true;
-				System.out.println("Done");
 				break;
 			case TurnOpposite: //Turn 90 degrees in the other direction
 				//UNTESTED
 				output = turningPID.computePID(ahrs.getAngle(),t.get());
-				 robot.arcadeDrive(0, output);
-				if(output < 0.05)
+				robot.arcadeDrive(0, output);
+				if(output < 0.03 && Math.abs(ahrs.getAngle() - turnSetpoint) < 1)
 					start = true;
 				break;
 			case SwitchApproach: //approach the switch
@@ -510,71 +566,115 @@ public class Robot extends IterativeRobot {
 				positionPID.setSetpoint(21.81*countsPerInch);
 				output = positionPID.computePID(rightSide.get(), t.get());
 				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(),t.get()));
-				if(output < 0.05)
+				if(output < 0.03 && t.get() > 1)
 					start = true;
 				break;
-			case SwitchPlace: //Turn and place cube
+			case SwitchPlace: //Place cube
 				//UNTESTED
 				robot.arcadeDrive(0,0);
+				
+				//prepare to place
+				elevator.set(ControlMode.Position, elevatorMid);
+				wrist.set(ControlMode.Position, wristDown);
+				
+				if(firstSample)
+					timeNow = 500;//useless number used as place holder
+									//it must be big
+				
 				//place
-				//when done
+				if(Math.abs(elevator.getSelectedSensorPosition(0)-elevatorMid) < 25000 && Math.abs(wrist.getSelectedSensorPosition(0)-wristDown) < 25000)
+				{
+					if(firstSample)
+					{
+						firstSample = false;
+						timeNow = t.get();
+					}
+					
+					intakeL.set(0.2);
+					intakeR.set(0.2);
+					
+					System.out.println(t.get() + ":" + timeNow);
+					
+					if(t.get() - timeNow > 1)
+						start = true;
+				}
 				break;
 			case DriveFarther: //Initial Drive plus some
 				//UNTESTED
 				positionPID.setSetpoint(226.72*countsPerInch);
-				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(rightSide.get(),t.get());
 
 				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
-				if(output < 0.05)
+				if(output < 0.03 && t.get() > 1)
 					start = true;
 				break;
 			case NearScaleInitial: //Travel Farther plus drive
 				//UNTESTED
 				positionPID.setSetpoint(304.25*countsPerInch);
-				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(rightSide.get(),t.get());
 
 				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
-				if(output < 0.05)
+				if(output < 0.03 && t.get() > 1)
 					start = true;
-				
 				break;
 			case ScalePlace: //place a cube on the scale
+					elevator.set(ControlMode.Position, elevatorUp);
+					
+					if(Math.abs(elevator.getSelectedSensorPosition(0)-elevatorMid) < 25000)
+					{
+						wrist.set(ControlMode.Position, wristDown);
+						
+						if(firstSample)//random number that needs to be big
+							timeNow = 500;
+						
+						if(Math.abs(wrist.getSelectedSensorPosition(0)-wristDown) < 25000)
+						{
+							if(firstSample)
+							{
+								firstSample = false;
+								timeNow = t.get();
+							}
+							
+							intakeL.set(0.3);
+							intakeR.set(0.3);
+							
+							if(t.get() - timeNow > 1)
+								start = true;
+						}
+					}
 				break;
 			case CrossField: //Travel across the field
 				///UNTESTED
 				positionPID.setSetpoint(295.68*countsPerInch);
-				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(rightSide.get(),t.get());
 
 				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
-				if(output < 0.05)
+				if(output < 0.03 && t.get() > 1)
 					start = true;
-				break;
-			case FarSwitchPlace: //Place the cube on the far switch  (PV) this was not a defined case option! Added it to the new enum
-				//code to do that
 				break;
 			case ScaleApproach: //Adjust position relative to near scale plate
 				//UNTESTED
 				positionPID.setSetpoint(4.82*countsPerInch);
-				turningPID.setSetpoint(turnSetpoint);
 				output = positionPID.computePID(rightSide.get(),t.get());
 	
 				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
-				if(output < 0.05)
+				if(output < 0.03 && t.get() > 1)
 					start = true;
 				break;
 			case Done: //terminate auto
 				robot.arcadeDrive(0,0);
+				intakeL.set(0);
+				intakeR.set(0);
 				break;
 			case NA: //the case after Done
 				robot.arcadeDrive(0,0);
+				intakeL.set(0);
+				intakeR.set(0);
 				System.out.println("The state \"NA\" has been reached");
 				break;
 		}
 		
-		
+		SmartDashboard.putNumber("ahrs", ahrs.getAngle());
 		SmartDashboard.putNumber("t", t.get());
 	}
 
@@ -641,14 +741,14 @@ public class Robot extends IterativeRobot {
     		wrist.config_kP(0, upWristP, 10);//first argument is slotIdx
     		wrist.config_kI(0, upWristI, 10);
     		wrist.config_kD(0, upWristD, 10);
-    		targetWristPos = 0;
+    		targetWristPos = wristUp;
     	}
     	else if(xBox.getRawButton(7))
     	{
     		wrist.config_kP(1, downWristP, 10);//first argument is slotIdx
     		wrist.config_kI(1, downWristI, 10);
     		wrist.config_kD(1, downWristD, 10);
-    		targetWristPos = -106500;
+    		targetWristPos = wristDown;
     	}
     	
     	wrist.set(ControlMode.Position, targetWristPos);
@@ -660,22 +760,43 @@ public class Robot extends IterativeRobot {
     		elevator.config_kP(0, upElevatorP, 10);//first argument is slotIdx
     		elevator.config_kI(0, upElevatorI, 10);
     		elevator.config_kD(0, upElevatorD, 10);
-   			targetElevatorPos = -1000000;//go to top (this is a test value use:
+   			targetElevatorPos = elevatorUp;//go to top (this is a test value use:
+    	}
+    	else if(xBox.getRawButton(3))//X
+    	{
+    		if(elevator.getSelectedSensorPosition(0) > -500000)
+    		{
+    			elevator.config_kP(0, downElevatorP, 10);//first argument is slotIdx
+       			elevator.config_kI(0, downElevatorI, 10);
+       			elevator.config_kD(0, downElevatorD, 10);
+    		}
+    		else
+    		{
+    			elevator.config_kP(0, upElevatorP, 10);//first argument is slotIdx
+        		elevator.config_kI(0, upElevatorI, 10);
+        		elevator.config_kD(0, upElevatorD, 10);
+    		}
+    		targetElevatorPos = elevatorMid;
     	}
    		else if(xBox.getRawButton(1))//A      -1500000)
    		{
    			elevator.config_kP(0, downElevatorP, 10);//first argument is slotIdx
    			elevator.config_kI(0, downElevatorI, 10);
    			elevator.config_kD(0, downElevatorD, 10);
-   			targetElevatorPos = -20000; //go to bottom
+   			targetElevatorPos = elevatorDown; //go to bottom
    		}
    			
     	elevator.set(ControlMode.Position, targetElevatorPos);
+    	/*
     	
+    	if(Math.abs(xBox.getRawAxis(5)) > 0.2)
+    		elevator.set(ControlMode.PercentOutput, xBox.getRawAxis(5));
+    	else
+    		elevator.set(ControlMode.PercentOutput, 0);
     	
     	if(xBox.getRawButton(2))//B
     		elevator.setSelectedSensorPosition(0, 0, 0);
-    	
+    	*/
     	
     	
     	//hook code
@@ -716,6 +837,4 @@ public class Robot extends IterativeRobot {
     
     
     }
-}
-
 }
