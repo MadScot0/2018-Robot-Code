@@ -4,7 +4,6 @@ import com.ctre.phoenix.motorcontrol.ControlMode;
 import com.ctre.phoenix.motorcontrol.FeedbackDevice;
 import com.ctre.phoenix.motorcontrol.can.*;
 import com.kauailabs.navx.frc.AHRS;
-
 import edu.wpi.cscore.UsbCamera;
 import edu.wpi.first.wpilibj.CameraServer;
 import edu.wpi.first.wpilibj.DriverStation;
@@ -15,19 +14,17 @@ import edu.wpi.first.wpilibj.Encoder;
 import edu.wpi.first.wpilibj.Joystick;
 import edu.wpi.first.wpilibj.PWMTalonSRX;
 import edu.wpi.first.wpilibj.Relay;
-
-
 import edu.wpi.first.wpilibj.RobotDrive;
-import edu.wpi.first.wpilibj.Talon;
+import edu.wpi.first.wpilibj.Talon;				
 import edu.wpi.first.wpilibj.Victor;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.SPI;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
-//                                2018 Bot Code// v1.3.2a //improved auto
+//                                2018 Bot Code// v1.3.3 //cleaned up code
 									//remember to remove encoder reset from teleopInit before
-									//competition
+									//competition & ADD CASE
 /**						
  *
  * The VM is configured to automatically run this class, and to call the
@@ -41,7 +38,26 @@ import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
 public class Robot extends IterativeRobot {
 	
+	final static boolean debug = false;//debug constant for turning multiple debug outputs on and off
+													// Change before compiling.
 	int counter = 0;
+	
+	boolean letUp8;
+	double manualWristPower;//the variable that controls the manual aiming of the wrist
+	boolean manualWrist;//when this flag is triggered we gain manual control
+						//of the wrist even tough we won't be in manualCon
+	
+	long lastCaseEndingEncoderCount;
+	double lastCaseEndingTime;
+	double lastCaseEndingHeading;
+	
+	boolean potentiallyArrived;
+	double startTime;
+	
+	long currentPosition;
+	double currentTime;
+	double arrivalTime;
+	double currentAngle;
 	
     RobotDrive robot;
 	Joystick xBox;
@@ -68,29 +84,23 @@ public class Robot extends IterativeRobot {
 
 	Timer t;
 
-	boolean start; //Whether or not we just started a case
-
 	int autoID;
 	double turnSetpoint;
 	double positionSetpoint;
-
 	
 	double timeNow;
 	boolean firstSample;
 
-
 	public enum autoStates { 	Done,
 						BasicDrive, DriveFarther,  							
 						Turn, TurnOpposite, CrossField,
-						InitialDrive, SwitchApproach, SwitchPlace, FarSwitchPlace,	// FarSwitchInitial needed?
-						NearScaleInitial, ScaleApproach, ScalePlace,		// FarScaleInitial and FarScalePlace needed?
+						InitialDrive, SwitchApproach, SwitchPlace, FarSwitchPlace,
+						NearScaleInitial, ScaleApproach, ScalePlace,
 																			// Add steps here needed to pick up a cube from the floor (locate, 
 																			// acquire, and stow it for driving) to allow for Stage 3 auto tasks; 
 																			// will probably also need an additional autoID since getting a cube
 																			// is a separate multi step process. 
-						NA };												// Also add NA, use to fill unused steps in your fixed auto array
-																			// NA steps allow a check for whether autoStep gets out of step!
-																			
+						NA };
 																			// May also want to consider "auto" actions in teleop, especially 
 																			// locating and acquiring a cube you cannot see. Also perhaps 
 																			// placing a cube on a switch or scale plate automatically would 
@@ -98,7 +108,7 @@ public class Robot extends IterativeRobot {
 																			// abort on any teleop automatic actions!
 																			
 																			
-	int autoStep;//the variable that tracks how far into autonomous the robot is
+	int autoStep;	 //the variable that tracks how far into autonomous the robot is
 
 	String gameData; //variable for retrieving field setup
 
@@ -106,45 +116,50 @@ public class Robot extends IterativeRobot {
 	char scaleSide;  //side that is ours of the scale
 	char ourSide;    //the side that our robot is on on the field
 
+	double targetDistance;//distance to move forwards
+	double maxFeetPerSec = 16;//edit
+	double safetyTimeout;//max time allowed for autonomous step
+	
 	autoStates	auto[][] = new autoStates[17][8];			// first index is autoID, second index is place in list (autoStep)
 	autoStates autoCase;
 	
-	private SendableChooser placeCube; //Do we place a cube?
-	private SendableChooser startingLocation; //Where do we start?
-	private SendableChooser priorityType; //Decide based on side or scale/switch
-	private SendableChooser priorityPlace; //Decide based on scale or switch
-	private SendableChooser testMode; //Are we in testing mode
-	private SendableChooser testCase; //What case are we testing
+	private SendableChooser placeCube; 			//Do we place a cube?
+	private SendableChooser startingLocation;	//Where do we start?
+	private SendableChooser priorityType;		//Decide based on side or scale/switch
+	private SendableChooser priorityPlace;		//Decide based on scale or switch
+	private SendableChooser testMode;			//Are we in testing mode
+	private SendableChooser testCase;			//What case are we testing
 
 	SRF_PID positionPID;
 	SRF_PID turningPID;
 
 	Encoder leftSide;
 										
-	double countsPerInch = 18.96;//54.3249;
+	double countsPerInch = 18.96;				//was 54.3249
 	double output;
-	double turningMult;    //the variable used to mirror our operations depending on robot placement
+	double turningMult;    		//the variable used to mirror our operations depending on robot placement
 	
-	
-	int targetWristPos; //variable for where the wrist will move to
-	int targetElevatorPos; //variable for where the elevator will move to
+	int targetWristPos;			//variable for where the wrist will move to
+	int targetElevatorPos; 		//variable for where the elevator will move to
 	
 	//the variables for the constants in each PID loop
 	double upElevatorP = 0.0058, upElevatorI = 0, upElevatorD = 0.001;
 	double downElevatorP = 0.0035, downElevatorI = 0, downElevatorD  = 0.003;
 	
-	double upWristP = 0.0048, upWristI = 0.000002219, upWristD = 0.00207;
-	double upFromMidP = 0.00466, upFromMidI = 0.0000019, upFromMidD = 0.0025;
-	double downWristP = 0.0023, downWristI = 0.0000000175, downWristD = 0.0016;
-	double upToMidP = 0.0069, upToMidI = 0.0000033, upToMidD = 0.0015;
-	double downToMidP = 0.0037, downToMidI = 0.00000001775, downToMidD = 0.00305;
+	double   upWristP = 0.00605,   upWristI = 0.0000176,     upWristD = 0.0016;		//Going from the Bottom to the Top
+	double upFromMidP = 0.0047,		upFromMidI = 0.00005,     upFromMidD = 0.0025; 		//Going from the Middle to the Top
+	double downWristP = 0.0075,  downWristI = 0.000008,  downWristD = 0.5;
+	//double downWristP = 0.007,  downWristI = 0.0000252,  downWristD = 0.028; 		//Going from the Top or Middle to the Bottom
+	double   upToMidP = 0.5,    upToMidI = 0.05,       upToMidD = 0.00001;		  		//Going from the Bottom to the Middle
+	double downToMidP = 0.0043,  downToMidI = 0.00000001775, downToMidD = 0.00305; 	//Going from the Top to the Middle
 	
 	int elevatorUp = -1600000, elevatorMid = -475000, elevatorDown = -20000;
-	int wristUp = 0, wristMiddle = -53250, wristDown = -106500;
+	int    wristUp = 0,        wristMiddle = -53250,     wristDown = -126500;
 	int wristMode;
 	
 	boolean manualCon = false; //Used to change whether using manual controls for teleop
 	boolean letUp10;
+	
 	
 	int up = 0, mid = 1, down = 2;
 	
@@ -155,21 +170,20 @@ public class Robot extends IterativeRobot {
 		hook = new Victor(4);
 		winch = new Victor(7);
 		
-		
 		elevator = new TalonSRX(2);
 		elevator.configSelectedFeedbackSensor(FeedbackDevice.QuadEncoder, 0, 0);
 		elevator.config_kP(0, upElevatorP, 10); 
 		elevator.config_kI(0, upElevatorI, 10);
 		elevator.config_kD(0, upElevatorD, 10);
-		
-		
+			
 		wrist = new TalonSRX(1);
 		wrist.configSelectedFeedbackSensor(FeedbackDevice.QuadEncoder, 0, 0);
 		wrist.config_kP(0, downWristP, 10); 
 		wrist.config_kI(0, downWristI, 10);
 		wrist.config_kD(0, downWristD, 10);
+		wrist.configPeakOutputForward(0.45, 5);
+		wrist.configPeakOutputReverse(-0.45, 5);
 		
-	
 		intakeL = new Victor(5);
 		intakeR = new Victor(6);
 		
@@ -185,11 +199,12 @@ public class Robot extends IterativeRobot {
     	
     	t = new Timer();
     	t.start();
-
-    	/*UsbCamera camera = CameraServer.getInstance().startAutomaticCapture();
+	
+	/*	UsbCamera camera = CameraServer.getInstance().startAutomaticCapture();
         camera.setResolution(640, 480);
         camera.setExposureManual(45);
-        camera.setFPS(30);*/
+        camera.setFPS(30);
+	*/
     	
     	//initialize choosers
     	placeCube = new SendableChooser();
@@ -233,30 +248,30 @@ public class Robot extends IterativeRobot {
     	testCase.addObject("Scale Approach", 16);
     	SmartDashboard.putData("testCase", testCase);
     	
-    	turningPID = new SRF_PID();
+    	/*turningPID = new SRF_PID();
     	turningPID.setReverse(true);
     	turningPID.setPID(1.5, .75, .45);
-
+*/
     	positionPID = new SRF_PID();
-    	positionPID.setLimits(0.8, -0.8);
+    	positionPID.setLimits(0.9, -0.9);
     	positionPID.setReverse(true);
-    	positionPID.setPID(0.1, 0, 0.005);
-
+    	positionPID.setPID(0.001, 0.0000446429, 0.0001);
     	leftSide = new Encoder(0, 1);
-    	System.out.println("End Robot Init");
+    	if (debug) System.out.println("End Robot Init");
     }
 
+	
+	
     /**
      * This function is run once each time the robot enters autonomous mode
      */
 
     public void autonomousInit() {
-    	System.out.println("start auto init");
+    	if (debug) System.out.println("start auto init");
     	//get switch/scale orientation
     	gameData = DriverStation.getInstance().getGameSpecificMessage();
 
-    	
-    	try
+       	try
     	{
     		switchSide = gameData.charAt(0);
     	}
@@ -267,10 +282,10 @@ public class Robot extends IterativeRobot {
 
     	scaleSide = gameData.charAt(1);
 
-    	start = true;   //initialize variables
+    	// start = true;   //initialize variables
     	autoStep = -1;
     	wristMode = up;
-    	System.out.println(237);
+
     	//initialize potential autonomous steps
     	auto[0][0] = autoStates.BasicDrive; //drive forward over the auto line
     	auto[0][1] = autoStates.Done;
@@ -280,9 +295,10 @@ public class Robot extends IterativeRobot {
 		auto[0][5] = autoStates.NA;
 		auto[0][6] = autoStates.NA;
 		auto[0][7] = autoStates.NA;
-		
-    	auto[1][0] = autoStates.InitialDrive;//place cube on nearest switch platform
-    	auto[1][1] = autoStates.Turn;
+														
+    	auto[1][0] = autoStates.InitialDrive;
+    	auto[1][1] = autoStates.Turn;					// PMV - Is turn always necessary? Is it possible to place a cube on switch
+														// after straight ahead move from side starting position to switch?
     	auto[1][2] = autoStates.SwitchApproach;
     	auto[1][3] = autoStates.SwitchPlace;
     	auto[1][4] = autoStates.Done;
@@ -434,7 +450,7 @@ public class Robot extends IterativeRobot {
     	else
     		ourSide = 'M';
     	
-    	System.out.println(400);
+    	if(debug)System.out.println(400);
     	//initiate autoID based on sendable chooser and field
     	if((int) testMode.getSelected() == 2)				//if "Testing mode"
     		autoID = (int) testCase.getSelected();
@@ -443,7 +459,7 @@ public class Robot extends IterativeRobot {
     	else
     	{
     		//initialize turning direction multiplier
-    		if((int) priorityType.getSelected() == 1) //if looking for this side
+    		if((int) priorityType.getSelected() == 1) //if looking for closest side
     		{
     			if(switchSide != scaleSide) //if only one plate is on our side
     			{
@@ -451,10 +467,10 @@ public class Robot extends IterativeRobot {
     					autoID = 1;
     				else					 // go for the scale on our side
     					autoID = 3;
-    			}//
+    			}
     			else // the plates share a side
     			{
-    				if((int) priorityPlace.getSelected() == 2) //if going to scale
+    				if((int) priorityPlace.getSelected() == 2) // if going to scale
     				{
     					if(scaleSide == ourSide) //if the scale is on our side
     						autoID = 3;
@@ -470,7 +486,7 @@ public class Robot extends IterativeRobot {
     				}
     			}
     		}
-    		else//if looking based on switch or scale
+    		else //"else priority type 2 specifies we place cube (on either switch or scale, as Selected), regardless of side"
     		{
     			if((int) priorityPlace.getSelected() == 2) // if going to scale
     			{
@@ -487,26 +503,155 @@ public class Robot extends IterativeRobot {
     					autoID = 2;
     			}
     		}
-    	}
+		}
+
     	
-    	if(ourSide == 'R')
+		//initialize turning direction multiplier
+		if(ourSide == 'R')
     		turningMult = -1;
     	else
     		turningMult = 1;
     	
     	ahrs.reset();
     	leftSide.reset();
-    	System.out.println(461);
+    	System.out.println(516);
     	wrist.setSelectedSensorPosition(0, 0, 0);
     	elevator.setSelectedSensorPosition(0, 0, 0);
     	targetWristPos = 0;
     	targetElevatorPos = 0;
-    	System.out.println("end autoInit");
+    	advanceToNextAutoCase();
+    	
+    	
+    	
+    	if (debug) System.out.println("end autoInit");
     }
 
-    /**
-     * This function is called periodically during autonomous
-     */
+/*
+ *	 	  support utility for all init needed to move  robot under PID control.
+ *        this only works when the variables being set here are declared public. Only one movement 
+ *		  at a time will be active, thus the variable values will apply only to whichever autoCase is currently active.
+ */
+	public void prepareToMove(double d)
+	{
+		targetDistance = d;
+		positionSetpoint = targetDistance*countsPerInch;
+		positionPID.setSetpoint(positionSetpoint);
+		safetyTimeout = ((targetDistance/12)/(maxFeetPerSec*0.6)+.5); // Set drive to position safety timeouts by using .6 of max speed 
+																	  // (.6 * 16 ft/sec? = ~ 9.6) divided into target distance to travel (in feet). 
+																	  // To this add a half second fudge factor. 
+																	  // Adjust speed factor if needed (i.e. to avoid spurious timeouts).
+	}
+	
+	
+	
+	public void advanceToNextAutoCase() //correct these values
+	{ 	
+		if(debug) System.out.println("stopping robot");
+		robot.arcadeDrive(0,0);							// cancel any residual motion of robot.
+								
+		if (debug) System.out.println("autoStepAdvance");
+		
+		autoStep++;
+		if ((autoID < 0) || (autoID > 17) || (autoStep < 0) || (autoStep > 7))//error checks on array indices
+			autoCase = autoStates.NA;
+		else
+			autoCase = auto[autoID][autoStep];
+			
+		safetyTimeout = 1;								// Default timeout.
+		
+		switch(autoCase)
+		{
+			case Turn:
+				turnSetpoint = 90;
+				turningPID.setSetpoint(turnSetpoint);	// PMV - does a new Setpoint reset the PID, here and for each case below, 
+														// including the integrated value for kI as well as 
+														// the last current value, last error, and last time terms? 													
+														// It probably should, or else add an explicit PID class method 
+														// to reset the PID, and call that method separately. Given that sensors are 
+														// being reset below, we will be starting from scratch when we continue,
+														// so the stored PID values should also be cleared.
+														// The k factors of course should remain static until changed.	
+				safetyTimeout = 1.5;
+				break;
+			case TurnOpposite:
+				turnSetpoint = -90;
+				turningPID.setSetpoint(turnSetpoint);
+				safetyTimeout = 1.5;
+				break;
+			case BasicDrive:
+				safetyTimeout = 2.0;
+				break;
+			case InitialDrive: //Drive forward on the current side, in preparation to placing cube on switch
+				prepareToMove(120); 
+				break;		
+			case DriveFarther: 	// Initial Drive distance plus more to prepare for scale placement
+				prepareToMove(226.72);
+				break;
+			case NearScaleInitial: //Travel Farther plus drive
+				prepareToMove(304.25);
+				break;
+			case CrossField: //Travel across the field
+				prepareToMove(295.68);
+				break;
+			case ScaleApproach: //Adjust position relative to near scale plate
+				prepareToMove(4.82);
+				break;
+			case SwitchPlace: //PMV - case reserved for placing cube being carried on switch
+				//break?
+			case ScalePlace:  //Place cube being carried on the scale
+				// PMV- with Talon SRXs being used for elevator and wrist, PID control is obviously deferred to the Talons.
+				// I don't understand the current elevator and wrist control architecture well enough to say if anything needs
+				// changing here, but we still need notification of "Done" before proceeding with other cases,
+				// and safety timeouts might also be useful. 
+				// These components ideally should be able to do their standard operations under RIO control 
+				// (always with the option to fully override with manual joystick control). This would allow limited automation to 
+				// assist the drive team when picking up or placing a cube.
+				// For now, at least until I know more, these two init cases are left blank.
+				break;		
+			case NA:
+				System.out.println("Unexpected NA case in advanceToNextAutoCase");	
+				intakeL.set(0);
+				intakeR.set(0);
+				elevator.set(ControlMode.PercentOutput,0);
+				wrist.set(ControlMode.PercentOutput,0);
+				break;
+			case Done:
+				intakeL.set(0);
+				intakeR.set(0);
+				elevator.set(ControlMode.Position,elevator.getSelectedSensorPosition(0));
+				wrist.set(ControlMode.Position,wrist.getSelectedSensorPosition(0));
+				break;
+			default:
+				System.out.println("Unexpected default case in advanceToNextAutoCase");	
+				break;
+		}
+		
+		firstSample = true;//used to sample the start time of basic actions
+
+		lastCaseEndingEncoderCount = leftSide.get();
+		lastCaseEndingTime = t.get();
+		lastCaseEndingHeading = ahrs.getAngle();
+		
+		if(autoCase!=autoStates.Done) 
+		{
+			t.reset();
+			leftSide.reset();
+			ahrs.reset();
+		}
+		
+		if (debug) System.out.println("637:"+autoID+":"+autoStep+":"+autoCase);
+
+		potentiallyArrived = false;		//flag for use in ending PID controlled autoSteps.
+		startTime = t.get();			//startTime allows for "safety" timeouts. 
+	}
+
+	
+	
+	
+	
+/**
+ * This function is called periodically during autonomous
+ */
 
 	public void autonomousPeriodic()
 	{
@@ -514,46 +659,9 @@ public class Robot extends IterativeRobot {
 		
 		//cycle counter
 		counter++;
-		
-		if(start)//just starting into a new case
-		{ 		 
-			//Reset sensors
-			System.out.println("Start begin");
-			
-			//Determine next autonomous action
-			autoStep++;
-			autoCase = auto[autoID][autoStep];
 
-			if(autoCase == autoStates.Turn)
-			{
-				turningPID.setSetpoint(90);
-				turnSetpoint = 90;
-			}
-			else if(autoCase == autoStates.TurnOpposite)
-			{
-				turningPID.setSetpoint(-90);
-				turnSetpoint = -90;
-			}
-			else
-			{
-				turningPID.setSetpoint(0);
-				turnSetpoint = 0;
-			}
+		if (debug) System.out.println("658:"+autoID+":"+autoStep+":"+autoCase);
 
-			firstSample = true;
-			
-			if(autoCase!=autoStates.Done)
-			{
-				t.reset();
-				leftSide.reset();
-				ahrs.reset();
-			}
-			
-			//Disable initialization
-			start = false;
-			System.out.println(autoCase);
-		}
-		System.out.println(autoCase);
 		switch(autoCase)				//create a separate 
 										// staging monitor or "executive", and when any autoID is "Done", don't quit before calling that
 										// Executive so it can decide if a new autoID task should be started. That executive would 
@@ -562,58 +670,114 @@ public class Robot extends IterativeRobot {
 										// flags that it needs to, and return. This switch/case then continues to serve, sequencing
 										// though the steps of the specific autoID that the executive decided to try for.
 		{
-			case BasicDrive: //Just drive forward//
-				robot.arcadeDrive(-0.5,0);
-				if(t.get() > 2)
+			case BasicDrive: //Just drive forward
+				robot.arcadeDrive(-0.5,ahrs.getAngle());
+				if(debug){
+					System.out.println(t.get()+":"+startTime+":"+safetyTimeout);
+				}
+				if((t.get() - startTime) > safetyTimeout)				
 				{
-					robot.arcadeDrive(0,0);
-					start = true;
-					System.out.println("End BD");
+					if (debug) System.out.println("End BD");
+					advanceToNextAutoCase();			
 				}
 				break;
-			case InitialDrive: //Drive forward on the side and get ready to place
-				//UNTESTED
-				positionSetpoint = 120*countsPerInch;
-				positionPID.setSetpoint(positionSetpoint);//151.5
-				output = positionPID.computePID(leftSide.get(),t.get());
-			//	if(counter % 20 == 0)
-				//	System.out.println(output+"::"+positionSetpoint+":"+leftSide.get()+"::"+t.get());
-				robot.arcadeDrive(output, /*turningPID.computePID(ahrs.getAngle(), t.get())*/0);
+			case InitialDrive:
+			case SwitchApproach:
+			case DriveFarther:
+			case NearScaleInitial:				
+			case CrossField:
+			case ScaleApproach:
+				currentPosition = leftSide.get();
+				currentTime = t.get();
 				
-				if(Math.abs(output) < 0.03 && Math.abs(leftSide.get()-positionSetpoint) < 57 && t.get() > 1)//add turning output?
+				output = positionPID.computePID(currentPosition, currentTime);	// PMV - changed to temp variable arguments instead of method calls.
+				
+				robot.arcadeDrive(output, -ahrs.getAngle());			// PMV - eliminated turningPID, switched to simple gyro stabilized drive
+				
+				if(debug && (counter % 20 == 0))
+					System.out.println(output+"::"+positionSetpoint+":"+currentPosition+"::"+currentTime);
+			
+				// PMV - original test for termination (line just below, now commented out) needed fixing:			
+				//   "if((Math.abs(output) < 0.03) && (Math.abs(currentPosition-positionSetpoint) < 57) && (currentTime > 1))"
+				// 
+				// To begin, I deferred current time check until later, added a test for encoder > setPoint (by any amount), 
+				// in which case a new "potentiallyArrived" flag is set and a "settling time" timeout is started.
+				// Allow the PID only a fixed amount of time to stabilize - 1 second should be more than enough if tuned well.
+				// To cover the case where the setPoint is never actually crossed (because the robot stops asymptotically or otherwise short),
+				// also test for being within a small threshold distance of the positionSetpoint (1" ?) AND calculated PID output is "small" (TBD)
+				// I suspect .03 may be too small - try .1, since if I recall correctly, anything under .2 does not cause 
+				// the robot to actually move...
+				// If a timeout occurs without being close to the setpoint, something is wrong. Advance the state to "N/A" (assumed to always be
+				// stored as the last autoStep index) to avoid further difficulties (and maybe arena fouls? ;-( ).
+				
+				if (! potentiallyArrived)
 				{
-					System.out.println("Output Computed:"+output);
-					start = true;
+					if (currentPosition > positionSetpoint)
+					{
+						potentiallyArrived = true;
+						arrivalTime = currentTime;
+					} else if ((currentTime-startTime) > safetyTimeout)	// safety timeout (note: add Safety timeout declaration! 3 Sec?)
+					{
+						// Always print on timeout condition, DEBUG defined or not!
+						System.out.println("Safety timeout "+autoID+":"+autoStep+" "+positionSetpoint+" : "+currentPosition+" :: "+(currentTime-startTime));			
+						autoStep = 6;		// PMV - this assignment ensures that the "still to be incremented" AutoStep will end up 
+						advanceToNextAutoCase();
+					}
+				} else {								// "potentiallyArrived" flag is now true, so at the least we are close. 
+														// Test for final arrival, and end case if so. Also end if "settling time" expires!
+					if ((Math.abs(output) < 0.1) && (Math.abs(currentPosition-positionSetpoint) < countsPerInch)
+				        ||
+						(currentTime - arrivalTime) > 1)
+					{
+						if (debug) System.out.println("End "+autoID+":"+autoStep+" "+output+" :: "+positionSetpoint+" : "+currentPosition+" :: "+currentTime+" : "+arrivalTime);
+						advanceToNextAutoCase();
+					}
+				}
+				break;			
+			case TurnOpposite:		// Turn -90 degrees 
+			case Turn:			    // Turn 90 degrees
+				currentAngle = ahrs.getAngle();
+				currentTime = t.get();
+				
+				output = turningPID.computePID(currentAngle, currentTime);
+				robot.arcadeDrive(0, output);
+
+				if(debug && (counter % 20 == 0)) System.out.println(currentTime+" :: "+output+" :: "+turnSetpoint+" : "+currentAngle);
+
+				if (! potentiallyArrived)
+				{
+					if ((turnSetpoint == 90) && (currentAngle > turnSetpoint)
+					    ||
+						(turnSetpoint == -90) && (currentAngle < turnSetpoint))
+					{
+						potentiallyArrived = true;
+						arrivalTime = currentTime;
+					} else if ((currentTime-startTime) > safetyTimeout)	// PMV - new safety timeout (set timeout value declaration in 
+																		// advanceToNextAutoStep. 1 Sec should work for turns.
+					{
+						System.out.println("Turn safety timeout "+autoID+":"+autoStep+" "+turnSetpoint+" :: "+currentAngle+" :: "+(currentTime-startTime));			
+						autoStep = 6;		//set autoStep to become 7 (N/A), which will shut down actuators for the remainder of autonomous.
+						advanceToNextAutoCase();
+					}
+				} else {								// "potentiallyArrived" is true, so at the least we are close. 
+														// This flag means safety timeout is effectively canceled, but remember setting 
+														// timeout was started and is still active.
+														// Test for final arrival based on threshold tests; end case and advance if so. 
+														// Also end and advance if "settling time" expires!
+					if ((Math.abs(output) < 0.1) && (Math.abs(currentPosition-positionSetpoint) < countsPerInch)
+				        ||
+						(currentTime - arrivalTime) > 1)
+					{
+						if (debug) System.out.println("End Turn: "+autoID+":"+autoStep+" "+turnSetpoint+" :: "+currentAngle+" :: "+(currentTime-startTime));
+						advanceToNextAutoCase();
+					}
 				}
 				break;
-			case Turn: //Turn 90 degrees
-				//UNTESTED
-				output = turningPID.computePID(ahrs.getAngle(),t.get());
-				robot.arcadeDrive(0, output);
-				System.out.println(output);
-				System.out.println(ahrs.getAngle());
-				if(Math.abs(ahrs.getAngle() - turnSetpoint) < 1 && output < 0.03)
-					start = true;
-				break;
-			case TurnOpposite: //Turn 90 degrees in the other direction
-				//UNTESTED
-				output = turningPID.computePID(ahrs.getAngle(),t.get());
-				robot.arcadeDrive(0, output);
-				if(output < 0.03 && Math.abs(ahrs.getAngle() - turnSetpoint) < 1)
-					start = true;
-				break;
-			case SwitchApproach: //approach the switch
-				//UNTESTED
-				positionPID.setSetpoint(21.81*countsPerInch);
-				output = positionPID.computePID(leftSide.get(), t.get());
-				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(),t.get()));
-				if(output < 0.03 && t.get() > 1)
-					start = true;
-				break;
+// PMV - no review yet for cube handling, elevator or wrist. Seems to work somewhat now, but will look closer mid week.
 			case SwitchPlace: //Place cube
 				//UNTESTED
 				robot.arcadeDrive(0,0);
-				
+				currentTime = t.get();
 				//prepare to place
 				elevator.set(ControlMode.Position, elevatorMid);
 				wrist.set(ControlMode.Position, wristDown);
@@ -628,90 +792,61 @@ public class Robot extends IterativeRobot {
 					if(firstSample)
 					{
 						firstSample = false;
-						timeNow = t.get();
+						timeNow = currentTime;
 					}
 					
 					intakeL.set(0.2);
 					intakeR.set(0.2);
 					
-					System.out.println(t.get() + ":" + timeNow);
+					if (debug)System.out.println(t.get() + ":" + timeNow);
 					
-					if(t.get() - timeNow > 1)
-						start = true;
+					if(currentTime - timeNow > 1)
+						advanceToNextAutoCase();
+				}
+				
+				if(currentTime - startTime > 3)
+				{
+					autoStep = 6;
+					advanceToNextAutoCase();
 				}
 				break;
-			case DriveFarther: //Initial Drive plus some
-				//UNTESTED
-				positionPID.setSetpoint(226.72*countsPerInch);
-				output = positionPID.computePID(leftSide.get(),t.get());
-
-				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
-				if(output < 0.03 && t.get() > 1)
-					start = true;
-				break;
-			case NearScaleInitial: //Travel Farther plus drive
-				//UNTESTED
-				positionPID.setSetpoint(304.25*countsPerInch);
-				output = positionPID.computePID(leftSide.get(),t.get());
-
-				robot.arcadeDrive(output, 0/*turningPID.computePID(ahrs.getAngle(), t.get())*/);
-				if(output < 0.03 && t.get() > 1)
-					start = true;
-				break;
 			case ScalePlace: //place a cube on the scale
-					elevator.set(ControlMode.Position, elevatorUp);
+				elevator.set(ControlMode.Position, elevatorUp);
+				currentTime = t.get();
+				if(Math.abs(elevator.getSelectedSensorPosition(0)-elevatorMid) < 25000)
+				{
+					wrist.set(ControlMode.Position, wristDown);
 					
-					if(Math.abs(elevator.getSelectedSensorPosition(0)-elevatorMid) < 25000)
+					if(firstSample)//random number that needs to be big
+						timeNow = 500;
+						
+					if(Math.abs(wrist.getSelectedSensorPosition(0)-wristDown) < 25000)
 					{
-						wrist.set(ControlMode.Position, wristDown);
-						
-						if(firstSample)//random number that needs to be big
-							timeNow = 500;
-						
-						if(Math.abs(wrist.getSelectedSensorPosition(0)-wristDown) < 25000)
+						if(firstSample)
 						{
-							if(firstSample)
-							{
-								firstSample = false;
-								timeNow = t.get();
-							}
-							
-							intakeL.set(0.3);
-							intakeR.set(0.3);
-							
-							if(t.get() - timeNow > 1)
-								start = true;
+							firstSample = false;
+							timeNow = t.get();
 						}
+							
+						intakeL.set(0.3);
+						intakeR.set(0.3);
+						
+						if(currentTime - timeNow > 1)
+							advanceToNextAutoCase();
 					}
+				}
+				
+				if(currentTime - startTime > 3)
+				{
+					autoStep = 6;
+					advanceToNextAutoCase();
+				}
 				break;
-			case CrossField: //Travel across the field
-				///UNTESTED
-				positionPID.setSetpoint(295.68*countsPerInch);
-				output = positionPID.computePID(leftSide.get(),t.get());
-
-				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
-				if(output < 0.03 && t.get() > 1)
-					start = true;
-				break;
-			case ScaleApproach: //Adjust position relative to near scale plate
-				//UNTESTED
-				positionPID.setSetpoint(4.82*countsPerInch);
-				output = positionPID.computePID(leftSide.get(),t.get());
-	
-				robot.arcadeDrive(output, turningPID.computePID(ahrs.getAngle(), t.get()));
-				if(output < 0.03 && t.get() > 1)
-					start = true;
-				break;
-			case Done: //terminate auto
-				robot.arcadeDrive(0,0);
-				intakeL.set(0);
-				intakeR.set(0);
-				break;
-			case NA: //the case after Done
-				robot.arcadeDrive(0,0);
-				intakeL.set(0);
-				intakeR.set(0);
-				System.out.println("The state \"NA\" has been reached");
+			case NA: //the case after Done; nothing to do, but generally unexpected.
+				if(debug && (counter % 20 == 0)) System.out.println("The state \"NA\" has been reached");
+				// intentional fall through here
+			case Done: //Do nothing
+			default:
 				break;
 		}
 		
@@ -719,7 +854,7 @@ public class Robot extends IterativeRobot {
 		SmartDashboard.putNumber("t", t.get());
 	}
 
-    
+ 
     /**
      * This function is called once each time the robot enters teleoperated mode
      */
@@ -727,14 +862,15 @@ public class Robot extends IterativeRobot {
     public void teleopInit()
     {
     	leftSide.reset();
-    	wrist.setSelectedSensorPosition(0, 0, 0);
-    	elevator.setSelectedSensorPosition(0, 0, 0);
+    	wrist.setSelectedSensorPosition(0, 0, 0);//take these out
+    	elevator.setSelectedSensorPosition(0, 0, 0);//take these out
     	targetWristPos = 0;
     	targetElevatorPos = 0;
 		wrist.set(ControlMode.Position, 0);
 		ahrs.reset();
 		letUp10 = true;
 		manualCon = false;
+		manualWrist = false;
 		wristMode = up;
     }
 
@@ -749,7 +885,7 @@ public class Robot extends IterativeRobot {
 
     public void teleopPeriodic()
     {
-    	if(!manualCon)
+    	if(!manualCon /*|| !debug*/)
     	{
 	    	if(!xBox.getRawButton(9) && Math.abs(xBox.getRawAxis(1)) > 0.2 || Math.abs(xBox.getRawAxis(0)) > 0.2)
 	    		 robot.arcadeDrive(xBox.getRawAxis(1), -xBox.getRawAxis(0));
@@ -760,13 +896,13 @@ public class Robot extends IterativeRobot {
 	    	//cube intake
 	    	if(xBox.getRawAxis(2) > 0.2)//intake
 	    	{
-	    		intakeL.set(-.5);
-	    		intakeR.set(-.5);
+	    		intakeL.set(-.65);
+	    		intakeR.set(-.65);
 	    	}
 	    	else if(xBox.getRawAxis(3) > 0.2)//eject
 	    	{
-	    		intakeL.set(.65);
-	    		intakeR.set(.65);
+	    		intakeL.set(.8);
+	    		intakeR.set(.8);
 	    	}
 	    	else
 	    	{
@@ -776,7 +912,7 @@ public class Robot extends IterativeRobot {
 	    	
 	    	
 	    	//test wrist code//
-	    	if(xBox.getRawButton(3))//X
+	    	if(xBox.getRawButton(3) && !manualWrist && wristMode!=up)//X
 	    	{
 	    		if(wristMode == down)
 	    		{
@@ -795,7 +931,13 @@ public class Robot extends IterativeRobot {
 	    	}
 	    	else if(xBox.getRawButton(8))//Start
 	    	{
-	    		if(wristMode == down)
+	    		if(!manualWrist && letUp8)
+	    			manualWrist = true;
+	    		else if(letUp8)
+	    			manualWrist = false;
+	    		
+	    		letUp8 = false;
+	    		/*if(wristMode == down)
 	    		{
 	    			wrist.config_kP(0, upToMidP, 10); 
 	    			wrist.config_kI(0, upToMidI, 10);
@@ -809,9 +951,9 @@ public class Robot extends IterativeRobot {
 	    		}
 	    		targetWristPos = wristMiddle;
 	    		wristMode = mid;
-	    		
+	    		*/
 	    	}
-	    	else if(xBox.getRawButton(7))//Back
+	    	else if(xBox.getRawButton(7) && !manualWrist &&wristMode!=down)//Back
 	    	{
 	    		wrist.config_kP(0, downWristP, 10); 
 	    		wrist.config_kI(0, downWristI, 10);
@@ -820,20 +962,41 @@ public class Robot extends IterativeRobot {
 	    		wristMode = down;
 	    	}
 	    	
-	    	wrist.set(ControlMode.Position, targetWristPos);
+	    	if(!xBox.getRawButton(8))
+	    		letUp8 = true;
 	    	
+	    	if(debug)System.out.println(":"+manualWrist);
+	    	if(!manualWrist)
+	    		wrist.set(ControlMode.Position, targetWristPos);
+	    	else
+	    	{
+	    		manualWristPower = xBox.getRawAxis(5);
+	    		
+	    		if(Math.abs(manualWristPower) > 0.2)
+	    		{
+	    			if(manualWristPower > 0 && wrist.getSelectedSensorPosition(0) > -1500)
+	    				wrist.set(ControlMode.PercentOutput, 0);
+	    			else if(manualWristPower < 0 && wrist.getSelectedSensorPosition(0) < -160000)
+	    				wrist.set(ControlMode.PercentOutput, 0);
+	    			else
+	    				wrist.set(ControlMode.PercentOutput, manualWristPower);
+	    		}
+	    		else
+	    			wrist.set(ControlMode.PercentOutput, 0);
+	    	}
 	    	
-	    /*	if(xBox.getRawButton(3))//X
+	    	/*if(xBox.getRawButton(3))//X
 	    		wristControl(up);
 	    	else if(xBox.getRawButton(8))//Start
 	    		wristControl(mid);
 	    	else if(xBox.getRawButton(7))//Back
-	    		wristControl(down);
-	    	*/
-	    	System.out.println("814:"+xBox.getRawButton(4));
+	    		wristControl(down);*/
+	    	
+	    	if(debug)System.out.println("814:"+xBox.getRawButton(4));
 	    	//Elevator code
 	    	if(xBox.getRawButton(4))//Y
-	    	{System.out.println("moving elevator up");
+	    	{
+	    		if(debug)System.out.println("moving elevator up");
 	    		elevator.config_kP(0, upElevatorP, 10); 
 	    		elevator.config_kI(0, upElevatorI, 10);
 	    		elevator.config_kD(0, upElevatorD, 10);
@@ -961,7 +1124,7 @@ public class Robot extends IterativeRobot {
 		    }
 		   
 	    }
-    	System.out.println(manualCon);
+    	if(debug)System.out.println(manualCon);
     	
     	if(!xBox.getRawButton(10))
     		letUp10 = true;
@@ -977,9 +1140,9 @@ public class Robot extends IterativeRobot {
     void wristControl(int pos)
     {
     	
-    	if(pos == up)
+    	if(pos == up)//X
     	{
-    		if(wrist.getSelectedSensorPosition(0) < -55000)
+    		if(wristMode == down)
     		{
     			wrist.config_kP(0, upWristP, 10); 
     			wrist.config_kI(0, upWristI, 10);
@@ -992,10 +1155,11 @@ public class Robot extends IterativeRobot {
     			wrist.config_kD(0, upFromMidD, 10);
     		}
     		targetWristPos = wristUp;
+    		wristMode = up;
     	}
-    	else if(pos == mid)
+    	else if(pos == mid)//Start
     	{
-    		if(wrist.getSelectedSensorPosition(0) < -55000)
+    		if(wristMode == down)
     		{
     			wrist.config_kP(0, upToMidP, 10); 
     			wrist.config_kI(0, upToMidI, 10);
@@ -1008,24 +1172,26 @@ public class Robot extends IterativeRobot {
     			wrist.config_kD(0, downToMidD, 10);
     		}
     		targetWristPos = wristMiddle;
+    		wristMode = mid;
     		
     	}
-    	else if(pos == down)
+    	else if(pos == down)//Back
     	{
     		wrist.config_kP(0, downWristP, 10); 
     		wrist.config_kI(0, downWristI, 10);
     		wrist.config_kD(0, downWristD, 10);
     		targetWristPos = wristDown;
+    		wristMode = down;
     	}
     	
-   /* 	if(wristMin.get())
+    	if(wristMin.get())
     		wrist.setSelectedSensorPosition(0, 0, 0);
     	
-    	if(wrist.getOutputCurrent() < 0 && wrist.getSelectedSensorPosition(0) < 10)
-    		*/wrist.set(ControlMode.PercentOutput, 0);
-    	/*else
+    /*	if(wrist.getOutputCurrent() < 0 && wrist.getSelectedSensorPosition(0) < 10)
+    		wrist.set(ControlMode.PercentOutput, 0);
+    	else*/
     		wrist.set(ControlMode.Position, targetWristPos);
-    	*/
+    	
     }
     
     
