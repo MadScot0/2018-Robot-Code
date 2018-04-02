@@ -3,6 +3,7 @@ import com.ctre.phoenix.motorcontrol.ControlMode;
 import com.ctre.phoenix.motorcontrol.FeedbackDevice;
 import com.ctre.phoenix.motorcontrol.can.*;
 import com.kauailabs.navx.frc.AHRS;
+
 import edu.wpi.cscore.UsbCamera;
 import edu.wpi.first.wpilibj.CameraServer;
 import edu.wpi.first.wpilibj.DriverStation;
@@ -12,6 +13,7 @@ import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.Encoder;
 import edu.wpi.first.wpilibj.Joystick;
 import edu.wpi.first.wpilibj.PWMTalonSRX;
+import edu.wpi.first.wpilibj.PowerDistributionPanel;
 import edu.wpi.first.wpilibj.Relay;
 import edu.wpi.first.wpilibj.RobotDrive;
 import edu.wpi.first.wpilibj.Talon;				
@@ -21,9 +23,11 @@ import edu.wpi.first.wpilibj.SPI;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
-//                                2018 Bot Code// v1.3.4 //added runtime tuning utility
-									//Adding elevator sensors
-									//remeber to rework auto
+//                                2018 Bot Code// v1.3.4.2 //added fine tuning to RTU
+									//removed automatic write to talon on wrist tuning
+									//remeber to rework auto?
+									//fixed safety timeout bug, and attempted to fix a bug with
+									//the motor safety helper
 /**						
  *
  * The VM is configured to automatically run this class, and to call the
@@ -36,6 +40,23 @@ import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 @SuppressWarnings("deprecation")
 
 public class Robot extends IterativeRobot {
+	
+	boolean twoLetUp2;
+	boolean twoLetUp4;
+	boolean twoLetUp5;
+	boolean twoLetUp6;
+	boolean twoLetUp8;
+	boolean twoLetUp10;
+	
+	double targetTurn;
+	
+	//PowerDistributionPanel pdp = new PowerDistributionPanel();
+	//potential for graphing current draw
+	boolean setpointReached;
+	boolean wristFlushed;
+	
+	double multMode;//the multiplier for the multiplier increment in PID tuning
+	//cycle through 1, .5, .1, and 2
 	
 	Timer testTimer;
 	int testLoopCount;
@@ -52,30 +73,26 @@ public class Robot extends IterativeRobot {
 	double currentDValue;
 	double currentMultP = 1, currentMultI = 1, currentMultD = 1;
 	int pidGain = 1;
-	static final int pidChoice = 2;//1=wrist,2=elevatorUp,3=elevatorDown, 4=positionPID, 5=wristUp, 6=turningPID
+	static final int pidChoice = 6;//1=wristDown,2=elevatorUp,3=elevatorDown, 4=positionPID, 5=wristUp, 6=turningPID
 	
-	boolean setWristUp;
 	boolean setElevatorDown;
 	
 	double arrivalThreshold;
 	
-	double navXCorrect = 16;			// XXX should be ~ 30. Converts heading error (in degrees) into 
+	double navXCorrect = 10;//16;			// XXX should be ~ 30. Converts heading error (in degrees) into 
 										// appropriate -1 to 1 range arcade drive direction control argument
 	double directionControl;
 	
-// XXX obsolete?	double positionP=0.0045, positionI = 0.000556875, positionD = 0.0002475;
-// XXX	obsolete? double positionCloseP = 0.009, positionCloseI = 0.0273375, positionCloseD = 0.00263847656;
-	double positionP=0.0045, positionI = 0.018225, positionD = 0.0017775;
-	double turningP=0.05, turningI=1.2, turningD=0.01;
-	
+	double positionP=0.0117, positionI = 0.03488265, positionD = 0.0015475;
+	double turningP=0.1, turningI=2.4, turningD=0.04;	
 	double basePositionP=positionP, basePositionI = positionI, basePositionD = positionD;
 	double baseTurningP=turningP, baseTurningI=turningI, baseTurningD=turningD;
 	
 	boolean withinRange;//are we within an inch of the setpoint
 	double timeReached;//the time we found we were within an inch of the setpoint
 	
-	final static boolean enableManual = true;
-	final static boolean testing = true;
+	final static boolean enableManual = false;
+	final static boolean testing = true;//
 	final static boolean debug = false;//debug constant for turning multiple debug outputs on and off
 													// Change before compiling.
 	int counter = 0;
@@ -104,6 +121,7 @@ public class Robot extends IterativeRobot {
 	
     RobotDrive robot;
 	Joystick xBox;
+	Joystick tuningController;
 
 	Talon frontLeft;
 	Talon rearLeft; 
@@ -121,7 +139,6 @@ public class Robot extends IterativeRobot {
 	
 	AHRS ahrs;
 
-	DigitalInput wristMax;
 	DigitalInput highElevator;
 	DigitalInput lowElevator;
 	
@@ -141,10 +158,11 @@ public class Robot extends IterativeRobot {
 
 	public enum autoStates { 	Done,
 						BasicDrive, DriveFarther,  							
-						Turn, TurnOpposite, Turn45, CrossField,
+						Turn, TurnOpposite, Turn45, TurnOpposite45, CrossField,
 						InitialDrive, SwitchApproach, SwitchPlace, FarSideBackToSwitch, 
 						NearScaleInitial, ScaleApproach, ScalePlace, FarSideOnToScale,  
-						DriveToSwitchSide,												// XXX Added new distance to allow straight move
+						DriveToSwitchSide, InitialCenterL, SecondaryCenterL, FinalCenter,												
+						InitialCenterR, SecondaryCenterR, raiseForSwitch, raiseForScale,// XXX Added new distance to allow straight move
 																						// and cube placement on near Switch without turns
 																						// Limited to starting Position 'M', with no alliance
 																						// robot to our right
@@ -172,7 +190,7 @@ public class Robot extends IterativeRobot {
 	double maxFeetPerSec = 12;//16;//edit
 	double safetyTimeout;//max time allowed for autonomous step
 	
-	autoStates	auto[][] = new autoStates[21][10];			// first index is autoID, second index is place in list (autoStep)
+	autoStates	auto[][] = new autoStates[23][10];			// first index is autoID, second index is place in list (autoStep)
 	autoStates autoCase;
 	
 	private SendableChooser placeCube; 			//Do we place a cube?
@@ -181,18 +199,22 @@ public class Robot extends IterativeRobot {
 	private SendableChooser priorityPlace;		//Decide based on scale or switch
 	private SendableChooser testMode;			//Are we in testing mode
 	private SendableChooser testCase;			//What case are we testing
-
+	private SendableChooser farSideAccess;		//Are we allowed to cross the field
+													//(only in side pref)
+	
 	SRF_PID positionPID;
 	SRF_PID turningPID;
 
 	Encoder leftSide;
 										
-	double countsPerInch = 18.96;				//was 54.3249
+	double countsPerInch = 19.36;//18.96;
 	double output;
 	double turningMult;    		//the variable used to mirror our operations depending on robot placement
 	
 	int targetWristPos;			//variable for where the wrist will move to
 	int targetElevatorPos; 		//variable for where the elevator will move to
+	
+	int turnDirection;
 	
 	//the variables for the constants in each PID loop
 	//double upElevatorP = 0.0058, upElevatorI = 0.0000000000001, upElevatorD = 0.008;
@@ -203,19 +225,15 @@ public class Robot extends IterativeRobot {
 	double baseUpElevatorP = upElevatorP, baseUpElevatorI = upElevatorI, baseUpElevatorD = upElevatorD;
 	double baseDownElevatorP = downElevatorP, baseDownElevatorI = downElevatorI, baseDownElevatorD  = downElevatorD;
 	
-	//double   upWristP = 0.02,   upWristI = 0.0005,     upWristD = 0;
-//	double upFromMidP = 0.0047,		upFromMidI = 0.00005,     upFromMidD = 0.0025;
-	//double downWristP = 0.0075,  downWristI = 0.000016,  downWristD = 0.75;//practice values  0.0075,0.000008,0.5
-	double downWristP = 0.01,  downWristI = 0.000,  downWristD = 0.000;//old comp
-//	double   upToMidP = 0.5,    upToMidI = 0.05,       upToMidD = 0.00001;
-//	double downToMidP = 0.0043,  downToMidI = 0.00000001775, downToMidD = 0.00305;
-	double   upWristP = 0.027,   upWristI = 0.0017,     upWristD = 0.0000;
+	double downWristP = 0.00512,  downWristI = 0.00004,  downWristD = 0.00096;//old comp
+	//double   upWristP = 0.0297,   upWristI = 0.00187,     upWristD = 0.0000;
+	double   upWristP = 0.032,   upWristI = 0.00008,     upWristD = 0.000015;
 	
 	double baseDownWristP = downWristP,  baseDownWristI = downWristI,  baseDownWristD = downWristD;
 	double   baseUpWristP = upWristP,   baseUpWristI = upWristI,     baseUpWristD = upWristD;
 	
 	int elevatorUp = -1600000, elevatorMid = -475000, elevatorLowScale = -1370288, elevatorDown = -34000;//was -23500
-	int    wristUp = 5000,        wristMiddle = -53250,     wristDown = -106000;
+	int    wristUp = -6000,        wristMiddle = -89250,     wristDown = -136000;
 	int wristMode, elevatorMode;
 	
 	boolean manualCon = false; //Used to change whether using manual controls for teleop
@@ -224,7 +242,6 @@ public class Robot extends IterativeRobot {
 	int up = 0, mid = 1, lowScale = 2, down = 3;
 	
 	public void robotInit() {
-		wristMax = new DigitalInput(2);
 		highElevator = new DigitalInput(3);
 		lowElevator = new DigitalInput(4);
 		
@@ -242,12 +259,12 @@ public class Robot extends IterativeRobot {
 			
 		wrist = new TalonSRX(1);
 		wrist.configSelectedFeedbackSensor(FeedbackDevice.QuadEncoder, 0, 0);
-		wrist.setSelectedSensorPosition(16000,0,0);
-		wrist.config_kP(0, downWristP, 10); 
-		wrist.config_kI(0, downWristI, 10);
-		wrist.config_kD(0, downWristD, 10);
-		wrist.configPeakOutputForward(0.9, 5);
-		wrist.configPeakOutputReverse(-0.9, 5);
+		wrist.setSelectedSensorPosition(0,0,0);
+		wrist.config_kP(0, upWristP, 10); 
+		wrist.config_kI(0, upWristI, 10);
+		wrist.config_kD(0, upWristD, 10);
+		wrist.configPeakOutputForward(0.5, 5);
+		wrist.configPeakOutputReverse(-0.5, 5);
 		
 		intakeL = new Victor(5);
 		intakeR = new Victor(6);
@@ -259,7 +276,8 @@ public class Robot extends IterativeRobot {
     	
     	robot = new RobotDrive(frontLeft, rearLeft, frontRight, rearRight);
     	xBox = new Joystick(0);
-
+    	if(testing)tuningController = new Joystick(1);
+    	
     	ahrs = new AHRS(SPI.Port.kMXP);
     	
     	t = new Timer();
@@ -277,10 +295,15 @@ public class Robot extends IterativeRobot {
     	
     	//initialize choosers
     	placeCube = new SendableChooser();
-    	placeCube.addDefault("Place Cube", 1);
+    	placeCube.addObject("Place Cube", 1);
     	placeCube.addDefault("Drive", 2);
     	SmartDashboard.putData("placeCube", placeCube);
 
+    	farSideAccess = new  SendableChooser();
+    	farSideAccess.addDefault("Disable Cross Field", 0);
+    	farSideAccess.addObject("Enable Cross Field", 1);
+    	SmartDashboard.putData("farSideAccess", farSideAccess);
+    	
     	startingLocation = new SendableChooser();
     	startingLocation.addDefault("Left", 1);
     	startingLocation.addObject("Middle", 2);
@@ -321,7 +344,7 @@ public class Robot extends IterativeRobot {
     	SmartDashboard.putData("testCase", testCase);
 
     	positionPID = new SRF_PID();
-    	positionPID.setLimits(0.9, -0.9);
+    	positionPID.setLimits(0.7, -0.7);
     	positionPID.setReverse(true);
     	positionPID.setPID(positionP, positionI, positionD);
     	leftSide = new Encoder(0, 1);
@@ -341,6 +364,13 @@ public class Robot extends IterativeRobot {
      */
 
     public void autonomousInit() {
+    	elevatorMode = down;
+    	wristFlushed = false;
+    	wrist.set(ControlMode.PercentOutput, 0.2);
+		Timer.delay(.2);
+		wrist.setSelectedSensorPosition(0, 0, 0);
+		wrist.set(ControlMode.PercentOutput, 0);
+    	
     	startTestAuto = false;
     	if (debug) System.out.println("start auto init");
     	//get switch/scale orientation
@@ -392,11 +422,11 @@ public class Robot extends IterativeRobot {
 		auto[2][9] = autoStates.NA;
 		
     	auto[3][0] = autoStates.NearScaleInitial;	//place cube on near scale platform
-    	auto[3][1] = autoStates.Turn;
-    	auto[3][2] = autoStates.ScalePlace;
-    	auto[3][3] = autoStates.Done;
-		auto[3][4] = autoStates.NA;
-		auto[3][5] = autoStates.NA;
+    	auto[3][1] = autoStates.Turn45;
+    	auto[3][2] = autoStates.raiseForScale;
+    	auto[3][3] = autoStates.ScaleApproach;
+    	auto[3][4] = autoStates.ScalePlace;
+		auto[3][5] = autoStates.Done;
 		auto[3][6] = autoStates.NA;
 		auto[3][7] = autoStates.NA;
 		auto[3][8] = autoStates.NA;
@@ -423,18 +453,29 @@ public class Robot extends IterativeRobot {
     	auto[5][7] = autoStates.NA;
     	auto[5][8] = autoStates.NA;
     	auto[5][9] = autoStates.NA;
-													// place cube on Near Scale platform ('L'), starting from 'M'
-    	/*auto[6][0] = autoStates.InitialDrive;		
-    	auto[6][1] = autoStates.Turn;
-    	auto[6][2] = autoStates.FarSideBackToSwitch;
-    	auto[6][3] = autoStates.TurnOpposite;
-    	auto[6][4] = autoStates.DriveFarther;
-    	auto[6][5] = autoStates.TurnOpposite;		
-    	auto[6][6] = autoStates.ScaleApproach;
-    	auto[6][7] = autoStates.ScalePlace;
-    	auto[6][8] = autoStates.Done;
+													
+    	auto[6][0] = autoStates.InitialCenterL;		//place cube on left switch
+    	auto[6][1] = autoStates.TurnOpposite45;
+    	auto[6][2] = autoStates.SecondaryCenterL;
+    	auto[6][3] = autoStates.Turn45;
+    	auto[6][4] = autoStates.raiseForSwitch;
+    	auto[6][5] = autoStates.FinalCenter;
+    	auto[6][6] = autoStates.SwitchPlace;
+    	auto[6][7] = autoStates.Done;
+    	auto[6][8] = autoStates.NA;
     	auto[6][9] = autoStates.NA;
-		*/
+    	
+    	auto[22][0] = autoStates.InitialCenterR;		//place cube on right switch
+    	auto[22][1] = autoStates.Turn45;
+    	auto[22][2] = autoStates.SecondaryCenterR;
+    	auto[22][3] = autoStates.TurnOpposite45;
+    	auto[22][4] = autoStates.raiseForSwitch;
+    	auto[22][5] = autoStates.FinalCenter;
+    	auto[22][6] = autoStates.SwitchPlace;
+    	auto[22][7] = autoStates.Done;
+    	auto[22][8] = autoStates.NA;
+    	auto[22][9] = autoStates.NA;
+		
 		//testing sequences
  		auto[7][0] = autoStates.BasicDrive; 
     	auto[7][1] = autoStates.Done;
@@ -455,25 +496,32 @@ public class Robot extends IterativeRobot {
 		auto[8][5] = autoStates.NA;
 		auto[8][6] = autoStates.NA;
 		auto[8][7] = autoStates.NA;
-		auto[8][8] = autoStates.NA;		
+		auto[8][8] = autoStates.NA;
 		auto[8][9] = autoStates.NA;
 
- 		auto[9][0] = autoStates.Turn; 
-    	auto[9][1] = autoStates.Done;
+ 		auto[9][0] = autoStates.Turn;
+ 		
+ 		auto[9][1] = autoStates.Done;
 		auto[9][2] = autoStates.NA;
 		auto[9][3] = autoStates.NA;
 		auto[9][4] = autoStates.NA;
-		auto[9][5] = autoStates.NA;
+ 		
+    	/*auto[9][1] = autoStates.Turn;
+		auto[9][2] = autoStates.Turn;
+		auto[9][3] = autoStates.Turn;
+		auto[9][4] = autoStates.Done;
+		
+		*/auto[9][5] = autoStates.NA;
 		auto[9][6] = autoStates.NA;
 		auto[9][7] = autoStates.NA;
 		auto[9][8] = autoStates.NA;		
 		auto[9][9] = autoStates.NA;
 
  		auto[10][0] = autoStates.TurnOpposite; 
-    	auto[10][1] = autoStates.Done;
-		auto[10][2] = autoStates.NA;
-		auto[10][3] = autoStates.NA;
-		auto[10][4] = autoStates.NA;
+    	auto[10][1] = autoStates.TurnOpposite;
+		auto[10][2] = autoStates.TurnOpposite;
+		auto[10][3] = autoStates.TurnOpposite;
+		auto[10][4] = autoStates.Done;
 		auto[10][5] = autoStates.NA;
 		auto[10][6] = autoStates.NA;
 		auto[10][7] = autoStates.NA;
@@ -499,7 +547,7 @@ public class Robot extends IterativeRobot {
 		auto[12][5] = autoStates.NA;
 		auto[12][6] = autoStates.NA;
 		auto[12][7] = autoStates.NA;
-		auto[12][8] = autoStates.NA;		
+		auto[12][8] = autoStates.NA;
 		auto[12][9] = autoStates.NA;
 
  		auto[13][0] = autoStates.DriveFarther; 
@@ -532,7 +580,7 @@ public class Robot extends IterativeRobot {
 		auto[15][5] = autoStates.NA;
 		auto[15][6] = autoStates.NA;
 		auto[15][7] = autoStates.NA;
-		auto[15][8] = autoStates.NA;		
+		auto[15][8] = autoStates.NA;
 		auto[15][9] = autoStates.NA;
 
  		auto[16][0] = autoStates.CrossField; 
@@ -591,10 +639,10 @@ public class Robot extends IterativeRobot {
 		auto[20][9] = autoStates.NA;
 		
 		auto[21][0] = autoStates.Turn45; 
-    	auto[21][1] = autoStates.Done;
-		auto[21][2] = autoStates.NA;
-		auto[21][3] = autoStates.NA;
-		auto[21][4] = autoStates.NA;
+    	auto[21][1] = autoStates.Turn45;
+		auto[21][2] = autoStates.Turn45;
+		auto[21][3] = autoStates.Turn45;
+		auto[21][4] = autoStates.Done;
 		auto[21][5] = autoStates.NA;
 		auto[21][6] = autoStates.NA;
 		auto[21][7] = autoStates.NA;
@@ -618,7 +666,14 @@ public class Robot extends IterativeRobot {
     		autoID = 0;
     	else
     	{
-    		if((int) priorityType.getSelected() == 1) //if looking for closest side
+    		if(ourSide == 'M')
+    		{
+    			if(switchSide == 'L')
+    				autoID = 6;
+    			else
+    				autoID = 22;
+    		}
+    		else if((int) priorityType.getSelected() == 1) //if looking for closest side
     		{
  				if(switchSide != scaleSide) //if only one plate is on our side
     			{
@@ -633,15 +688,19 @@ public class Robot extends IterativeRobot {
     				{
     					if(scaleSide == ourSide) //if the scale is on our side
     						autoID = 3;
+    					else if((int) farSideAccess.getSelected() == 1)//go to the far scale
+    						autoID = 4;									//if we can
     					else
-    						autoID = 4;
+    						autoID = 0;
     				}
     				else // going to the switch (default mode - override to scale via sendable chooser for playoffs)
     				{
     					if(switchSide == ourSide)	//if the switch is on our side
     						autoID = 1;
+    					else if((int) farSideAccess.getSelected() == 1)//go to far switch if we
+    						autoID = 2;									//are allowed to
     					else
-    						autoID = 2;
+    						autoID = 0;
     				}
     			}
     		}
@@ -675,7 +734,6 @@ public class Robot extends IterativeRobot {
 		
     	leftSide.reset();
     	if(debug)System.out.println(516);
-    	wrist.setSelectedSensorPosition(0, 0, 0);
     	elevator.setSelectedSensorPosition(0, 0, 0);
     	wristMode = up;
 		
@@ -698,21 +756,13 @@ public class Robot extends IterativeRobot {
 		targetDistance = d;
 		positionSetpoint = targetDistance*countsPerInch;
 		positionPID.setSetpoint(positionSetpoint);
+		positionPID.setLimits(0.4, -0.4);
 		safetyTimeout = ((targetDistance/12)/(maxFeetPerSec*0.2)+.5); // Set drive to position safety timeouts by using .2 of max speed 															  
 		// Data - to travel 10 feet takes approx 2 seconds with 2 CIM drive
 		// to travel 24 feet takes approx 4 seconds with 2 CIM drive
 		// Both observations were with the throttle restricted to .9
 		// Max effective speed is thus about 6 feet per sec, or 1/3 of theoretical max of 16 ft/sec. Use .2 factor to avoid early terminations
 																	  // To this add a half second fudge factor. 
-/* 
-		// XXX - separate inits would be needed for 2 phase position PID - but this requirement should now be gone
-		if (d > shortDistanceThreshold)
-		{
-			positionPID.setPID(positionP, positionI, positionD);		
-		} else {
-			positionPID.setPID(positionCloseP, positionCloseI, positionCloseD);
-		}
-*/
 		positionPID.setPID(positionP, positionI, positionD);//this could be moved to autonomousInit() (or RobotInit())
 	}
 	
@@ -720,8 +770,14 @@ public class Robot extends IterativeRobot {
 	
 	public void advanceToNextAutoCase() //correct these values. May be mirrored by turningMult.
 	{
+		targetTurn = 0;
+		setpointReached = false;
+		intakeL.set(-0.2);
+		intakeR.set(-0.2);
+		targetWristPos = wristUp;
+		wristMode = up;
 		
-		int turnDirection = 1; //Used to control CW or CCW turns
+		turnDirection = 1; //Used to control CW or CCW turns
 	
 		if(debug) System.out.println("stopping robot before new case");
 		robot.arcadeDrive(0,0);							// cancel any residual motion of robot.
@@ -736,7 +792,7 @@ public class Robot extends IterativeRobot {
 		if (debug) System.out.println("autoStepAdvance");
 		
 		autoStep++;
-		if ((autoID < 0) || (autoID > 17) || (autoStep < 0) || (autoStep > 7))//error checks on array indices
+		if ((autoID < 0) || (autoID > 22) || (autoStep < 0) || (autoStep > 9))//error checks on array indices
 			autoCase = autoStates.NA;
 		else
 			autoCase = auto[autoID][autoStep];
@@ -746,17 +802,55 @@ public class Robot extends IterativeRobot {
 		
 		switch(autoCase)
 		{
+			case InitialCenterL:
+				prepareToMove(22.29);
+				break;
+			case InitialCenterR:
+				prepareToMove(22.45);
+				break;
+			case SecondaryCenterL:
+				prepareToMove(85);
+				break;
+			case SecondaryCenterR:
+				prepareToMove(67.75);
+				break;
+			case raiseForSwitch:
+				safetyTimeout = 5;
+				elevator.set(ControlMode.Position, elevatorMid);
+				targetElevatorPos = elevatorMid;
+				elevatorMode = mid;
+				break;
+			case raiseForScale:
+				safetyTimeout = 5;
+				targetElevatorPos = elevatorUp;
+				elevator.set(ControlMode.Position, elevatorUp);
+				elevatorMode = up;
+				break;
+			case FinalCenter:
+				prepareToMove(18);
+				break;
 			case TurnOpposite:
 				turnDirection = -1;
 			case Turn:
+				targetTurn = 90;
 				turnSetpoint += (90*turnDirection*turningMult);
-				safetyTimeout = 10; //XXX was 1.5; use 10 for tuning, 2 otherwise
+				if(testing)
+					safetyTimeout = 30;
+				else
+					safetyTimeout = 2;
 				turningPID.setSetpoint(turnSetpoint);
 				break;
+			case TurnOpposite45:
+				turnDirection = -1;
 			case Turn45:
-				turnSetpoint+=(45*turningMult);
-				safetyTimeout = 1.5;
+				targetTurn = 45;
+				turnSetpoint+=(45*turningMult*turnDirection);
+				if(testing)
+					safetyTimeout = 30;
+				else
+					safetyTimeout = 2;
 				turningPID.setSetpoint(turnSetpoint);
+				break;
 			case BasicDrive:
 				safetyTimeout = 2.5;
 				break;
@@ -770,16 +864,16 @@ public class Robot extends IterativeRobot {
 				prepareToMove(216);
 				break;
 			case NearScaleInitial:
-				prepareToMove(305);
+				prepareToMove(256);
 				break;
 			//REMOVED BECAUSE WE'RE ALREADY REALLY CLOSE
 			case ScaleApproach: //Adjust position relative to near scale plate
-				prepareToMove(4.82);		//make biggerand use for approaching the side of the
-				break;				//scale
-			case CrossField:
-				prepareToMove(230);			
+				prepareToMove(11);		//make biggerand use for approaching the side of the
 				break;
-			case FarSideOnToScale:		// Removed
+			case CrossField:
+				prepareToMove(230);
+				break;
+			case FarSideOnToScale:		// Removed?
 				prepareToMove(89);
 				break;
 			case FarSideBackToSwitch:		// XXX New - for cross field autonomous
@@ -789,12 +883,19 @@ public class Robot extends IterativeRobot {
 				prepareToMove(96);			// XXX Allows 4.5" clearance for cube projection. Actual distance 8' 4.75"
 				break;
 			case SwitchPlace:	//Place cube being carried on switch
+				wrist.config_kP(0, downWristP, 10); 
+	    		wrist.config_kI(0, downWristI, 10);
+	    		wrist.config_kD(0, downWristD, 10);
 				elevator.set(ControlMode.Position, elevatorMid);
-				wrist.set(ControlMode.Position, wristDown);
-				safetyTimeout = 4;
+				if(!testing)
+					safetyTimeout = 4;
+				else
+					safetyTimeout = 30;
 				break;
 			case ScalePlace:  	//Place cube being carried on the scale
-				elevator.set(ControlMode.Position, elevatorUp);
+				wrist.config_kP(0, downWristP, 10); 
+	    		wrist.config_kI(0, downWristI, 10);
+	    		wrist.config_kD(0, downWristD, 10);
 				safetyTimeout = 6;
 				break;
 			case NA:
@@ -807,8 +908,8 @@ public class Robot extends IterativeRobot {
 			case Done:
 				intakeL.set(0);
 				intakeR.set(0);
-				elevator.set(ControlMode.Position,elevator.getSelectedSensorPosition(0));
-				wrist.set(ControlMode.Position,wrist.getSelectedSensorPosition(0));
+				//elevator.set(ControlMode.Position,elevator.getSelectedSensorPosition(0));
+				//wrist.set(ControlMode.Position,wrist.getSelectedSensorPosition(0));
 				break;
 			default:
 				System.out.println("Unexpected default case in advanceToNextAutoCase");	
@@ -840,6 +941,10 @@ public class Robot extends IterativeRobot {
 	{
 		SmartDashboard.putNumber("leftSide", leftSide.get());
 		
+		currentTime = t.get();
+		currentAngle = ahrs.getAngle();
+		currentPosition = leftSide.get();
+		
 		//cycle counter
 		counter++;
 
@@ -858,30 +963,62 @@ public class Robot extends IterativeRobot {
 				robot.arcadeDrive(-0.65,ahrs.getAngle()*.03);//we don't need turnSetpoint because it
 															//starts at 0
 				if(debug){
-					System.out.println(t.get()+":"+startTime+":"+safetyTimeout);
+					System.out.println(currentTime+":"+startTime+":"+safetyTimeout);
 				}
-				if((t.get() - startTime) > safetyTimeout)
+				if((currentTime - startTime) > safetyTimeout)
 				{
 					if (debug) System.out.println("End BD");
 					advanceToNextAutoCase();			
 				}
 				break;
-			case InitialDrive:
 			case SwitchApproach:
+				targetElevatorPos = elevatorMid;
+				elevatorMode = mid;
+			case ScaleApproach:
+			case InitialCenterL:
+			case InitialCenterR:
+			case SecondaryCenterL:
+			case SecondaryCenterR:
+			case FinalCenter:
+			case InitialDrive:
 			case DriveFarther:
 			case NearScaleInitial:				
 			case CrossField:
-			case ScaleApproach:
 			case FarSideBackToSwitch:
 			case FarSideOnToScale:
 			case DriveToSwitchSide:
-				currentPosition = leftSide.get();
-				currentTime = t.get();
 				
-				output = positionPID.computePID(currentPosition, currentTime);
-				directionControl = (turnSetpoint - ahrs.getAngle())/navXCorrect;
+				if(leftSide.get() > 8*countsPerInch)
+					positionPID.setLimits(0.8, -0.8);
+				else if(leftSide.get() > 4*countsPerInch)
+					positionPID.setLimits(0.6, -0.6);
+				else
+					positionPID.setLimits(0.4, -0.4);
 				
-				robot.arcadeDrive(output, directionControl);
+				if(!potentiallyArrived)
+				{
+					//positionPID.setLimits(0.5,-0.5);
+					output = positionPID.computePID(currentPosition, currentTime);
+					directionControl = -0.3-(turnSetpoint - ahrs.getAngle())/navXCorrect;
+					//directionControl = 0;
+				
+					robot.arcadeDrive(output, directionControl);
+				}
+				else
+				{
+					if(currentPosition < positionSetpoint)
+					{
+						if(setpointReached)
+							advanceToNextAutoCase();
+						else
+							robot.arcadeDrive(-0.35, 0);
+					}
+					else
+					{
+						setpointReached = true;
+						robot.arcadeDrive(0.35, 0);
+					}
+				}
 				
 				if(debug && (counter % 20 == 0))
 					System.out.println(output+"::"+positionSetpoint+":"+currentPosition+"::"+currentTime);
@@ -903,33 +1040,34 @@ public class Robot extends IterativeRobot {
 				// something by enlarging the thresholds. If still no luck, advance the state to "N/A" (assumed to always be
 				// stored as the last autoStep index) to avoid unknown difficulties (and maybe arena fouls).
 
-				if ((currentTime-startTime) > safetyTimeout)	//safety timeout now triggers potential arrival as last chance try
-				{
-					// Always print on timeout condition, DEBUG defined or not!
-					System.out.println("Pos safety timeout "+autoID+":"+autoStep+" "+positionSetpoint+" : "+currentPosition+" :: "+(currentTime-startTime));			
-					potentiallyArrived = true;
-					arrivalTime = currentTime;
-					settleTime = 0.5;					// On safety timeout, be more stingy on settle time allowed,
-					positionArrivalThreshold = 3;		// but be more generous on allowed tolerance.
-					withinRange = false;
-				}
-
 				if (! potentiallyArrived)
 				{
-					if (currentPosition > (positionSetpoint - (3*countsPerInch)))//if the robot is 3 inches short
+					if ((currentTime-startTime) > safetyTimeout)	//safety timeout now triggers potential arrival as last chance try
 					{
+						autoStep = 8;
+						advanceToNextAutoCase();
+						// Always print on timeout condition, DEBUG defined or not!
+						/*System.out.println("Pos safety timeout "+autoID+":"+autoStep+" "+positionSetpoint+" : "+currentPosition+" :: "+(currentTime-startTime));			
 						potentiallyArrived = true;
 						arrivalTime = currentTime;
+						settleTime = 0.5;					// On safety timeout, be more stingy on settle time allowed,
+						positionArrivalThreshold = 3;		// but be more generous on allowed tolerance.
+						withinRange = false;*/
+					}//3
+					else if (currentPosition > positionSetpoint*0.5)//if the robot is 3 inches short
+					{
+						potentiallyArrived = true;
+						/*arrivalTime = currentTime;
 						settleTime = 2;					// On regular arrival trigger, be more generous on settle time,
 						arrivalThreshold = 1;	// but more stingy on allowed tolerance.
-						withinRange = false;
+						withinRange = false;*/
 					}
-				} else
+				} /*else
 				{								// "potentiallyArrived" flag is now true, so at the least we are close. 
 												// Test for final arrival (within threshold for more than 100 ms),
 												// and end case if so.
 												// But first check if settle time has expired, and end if so
-					if((currentTime - arrivalTime) > settleTime)
+					/*if((currentTime - arrivalTime) > settleTime)
 					{
 						System.out.println("Pos settle timeout "+autoID+":"+autoStep+" "+positionSetpoint+" : "+currentPosition+" :: "+(currentTime-startTime));	
 						if (Math.abs(currentPosition-positionSetpoint)>(6*countsPerInch)) // On settle timeout, increase tolerance to 6"!
@@ -953,79 +1091,60 @@ public class Robot extends IterativeRobot {
 							if (debug) System.out.println("End "+autoID+":"+autoStep+" "+output+" :: "+positionSetpoint+" : "+currentPosition+" :: "+currentTime+" : "+arrivalTime);
 						}
 					}
-				}
+				}*/
 				break;
-			case TurnOpposite:		// Turn 90
+			case TurnOpposite:
 			case Turn:
+			case TurnOpposite45:
 			case Turn45:
-				currentAngle = ahrs.getAngle();
-				currentAngleDifference = turnSetpoint - currentAngle;
-				currentTime = t.get();
-				
-				output = turningPID.computePID(currentAngle, currentTime);
-				robot.arcadeDrive(0, output);
-
-				if(debug && (counter % 20 == 0)) System.out.println(currentTime+" :: "+output+" :: "+turnSetpoint+" : "+currentAngle);
-
-				if ((currentTime-startTime) > safetyTimeout)	//safety timeout now triggers potential arrival as last chance try
+				//if you haven't gone half way then compute the PID
+				if(Math.abs(currentAngle - turnSetpoint) > targetTurn*0.5)
 				{
-					// Always print on timeout condition, DEBUG defined or not!
-					System.out.println("Turn safety timeout: "+autoID+":"+autoStep+" "+turnSetpoint+" :: "+currentAngle+" :: "+(currentTime-startTime));
-					potentiallyArrived = true;
-					arrivalTime = currentTime;
-					settleTime = 0.5;					// On safety timeout, be more stingy on settle time allowed,
-					arrivalThreshold = 3;				// but be more generous on allowed tolerance.
-					withinRange = false;
+					directionControl = turningPID.computePID(currentAngle, currentTime);
+					robot.arcadeDrive(0, directionControl);
 				}
-
-				if (! potentiallyArrived)				
+				else
 				{
-					if (Math.abs(currentAngleDifference) <= 3)	// Under 7.5 deg error is the normal trigger for potential arrival 
-					{											// Danger! Unlike for the positionPID, missing the window completely
-																// is possible.
-						potentiallyArrived = true;
-						arrivalTime = currentTime;
-						settleTime = 2;					// On regular arrival trigger, be more generous on settle time,
-						arrivalThreshold = 1;			// but more stingy on allowed tolerance.
-						withinRange = false;
-					}
-				} else 
-				{								// "potentiallyArrived" flag is now true, so at the least we are close. 
-												// Test for final arrival (within threshold for more than 100 ms),
-												// and end case if so. 
-												// But first check if settle time has expired, and end if so
-					if((currentTime - arrivalTime) > settleTime)
+					if(turnDirection*turningMult==1)//turning right
 					{
-						System.out.println("Turn settle timeout "+autoID+":"+autoStep+" "+turnSetpoint+" : "+currentAngle+" :: "+(currentTime-startTime));	
-						if (Math.abs(currentAngleDifference) > 6)		// last chance to salvage goal. If less than 6 deg off, advance normally.
-							autoStep = 8;								// Otherwise abandon goal.
-						advanceToNextAutoCase();
-					} else if (!withinRange)	// We think we are out of range, see if the turnPID has taken us into (or back into) range
-					{
-						if (Math.abs(currentAngleDifference) <= arrivalThreshold)
+						if(currentAngle < turnSetpoint)
 						{
-							withinRange=true;
-							timeReached = currentTime;
+							if(setpointReached)
+								advanceToNextAutoCase();
+							else
+								robot.arcadeDrive(0, -0.6);
 						}
-					} else {					// we were withinRange earlier, see if we still are
-						if (Math.abs(currentAngleDifference) > arrivalThreshold) {
-							withinRange=false;	// Nope, try again next time through the periodic loop
-						} else if ((currentTime-timeReached) > .1)
-						{						// Yes, we're still within allowed tolerance, and have been for 100 ms. or more.
-												// Call it done!
-							advanceToNextAutoCase();
-							if (debug) System.out.println("End "+autoID+":"+autoStep+" "+output+" :: "+positionSetpoint+" : "+currentPosition+" :: "+currentTime+" : "+arrivalTime);
+						else
+						{
+							setpointReached = true;
+							robot.arcadeDrive(0, 0.55);
+						}
+					}
+					else
+					{
+						if(currentAngle > turnSetpoint)
+						{
+							if(setpointReached)
+								advanceToNextAutoCase();
+							else
+								robot.arcadeDrive(0, 0.6);
+						}
+						else
+						{
+							setpointReached = true;
+							robot.arcadeDrive(0, -0.55);
 						}
 					}
 				}
 				break;
 			case SwitchPlace: //Place cube
-				// see if we're ready to place
-				currentTime = t.get();
+				targetWristPos = wristDown;
+				wristMode = down;
 				
+				// see if we're ready to place
 				if((Math.abs(elevator.getSelectedSensorPosition(0)-elevatorMid) < 25000)
 				   && 
-				   (Math.abs(wrist.getSelectedSensorPosition(0)-wristDown) < 25000))
+				   (Math.abs(wrist.getSelectedSensorPosition(0)-wristDown) < 10000))
 				{
 					if(firstSample)
 					{
@@ -1034,8 +1153,8 @@ public class Robot extends IterativeRobot {
 						if (debug) System.out.println("Ready to place cube " + timeReached);
 					}
 					
-					intakeL.set(0.2);
-					intakeR.set(0.2);
+					intakeL.set(0.5);
+					intakeR.set(0.5);
 					
 					if(currentTime - timeReached > 1)
 						advanceToNextAutoCase();
@@ -1048,27 +1167,25 @@ public class Robot extends IterativeRobot {
 				}
 				break;
 			case ScalePlace: //place a cube on the scale
-				currentTime = t.get();
-				
-				if(Math.abs(elevator.getSelectedSensorPosition(0)-elevatorMid) < 25000)
-				{
-					wrist.set(ControlMode.Position, wristDown);
+				//if(Math.abs(elevator.getSelectedSensorPosition(0)-elevatorMid) < 25000)
+				//{
+					targetWristPos = wristDown;
 					
 					if(Math.abs(wrist.getSelectedSensorPosition(0)-wristDown) < 25000)
 					{
 						if(firstSample)
 						{
 							firstSample = false;
-							timeReached = t.get();
+							timeReached = currentTime;
 						}
 							
-						intakeL.set(0.3);
-						intakeR.set(0.3);
+						intakeL.set(0.5);
+						intakeR.set(0.5);
 						
 						if(currentTime - timeReached > 1)
 							advanceToNextAutoCase();
 					}
-				}
+				//}
 				
 				if((currentTime - startTime) > safetyTimeout)
 				{
@@ -1076,18 +1193,60 @@ public class Robot extends IterativeRobot {
 					advanceToNextAutoCase();
 				}
 				break;
+			case raiseForSwitch:
+				/*if(currentTime - startTime > safetyTimeout)
+				{
+					autoStep = 8;
+					advanceToNextAutoCase();
+				}
+				else */if(Math.abs(elevator.getSelectedSensorPosition(0)-elevatorMid) < 25000)
+					advanceToNextAutoCase();
+				break;
+			case raiseForScale:
+				/*if(currentTime - startTime > safetyTimeout)
+				{
+					autoStep = 8;
+					advanceToNextAutoCase();
+				}
+				else */if(Math.abs(elevator.getSelectedSensorPosition(0)-elevatorUp) < 25000)
+					advanceToNextAutoCase();
+				break;
 			case NA: //the case after Done; nothing to do, but generally unexpected.
 				if(debug && (counter % 20 == 0)) System.out.println("The state \"NA\" has been reached");
 				// intentional fall through here
 			case Done: //Do nothing
+				robot.arcadeDrive(0,0);
 				startTestAuto = true;
 				runningTestAuto = false;
 			default:
 				break;
 		}
 		
+		wrist.set(ControlMode.Position, targetWristPos);
+		
+		if(elevatorMode == down && (highElevator.get() || lowElevator.get()))
+		{
+			if(lowElevator.get() && highElevator.get())
+	    	{
+	    		elevator.setSelectedSensorPosition(-34000, 0, 10);
+	    		elevator.set(ControlMode.PercentOutput, -0.005);
+	    	}
+	    	else if(lowElevator.get())
+	    		elevator.set(ControlMode.PercentOutput, -0.15);
+	    	else if(highElevator.get())
+	    		elevator.set(ControlMode.PercentOutput, 0.15);
+		}
+		else
+		{
+			elevator.set(ControlMode.Position, targetElevatorPos);
+		}
+			
+		SmartDashboard.putNumber("autoID", autoID);
+		SmartDashboard.putNumber("positionSetpoint", positionSetpoint);
+		SmartDashboard.putNumber("directionControl", directionControl);
+		SmartDashboard.putNumber("leftSide", leftSide.get());
 		SmartDashboard.putNumber("ahrs", ahrs.getAngle());
-		SmartDashboard.putNumber("t", t.get());
+		SmartDashboard.putNumber("t", currentTime);
 		SmartDashboard.putNumber("deltaTime", currentTime-startTime);
 		SmartDashboard.putNumber("safetyTimeout", safetyTimeout);
 		SmartDashboard.putNumber("autoStep", autoStep);
@@ -1103,8 +1262,14 @@ public class Robot extends IterativeRobot {
     public void teleopInit()
     {
     	leftSide.reset();
-    if(testing)	wrist.setSelectedSensorPosition(0, 0, 0);//take these out
-    if(testing)	elevator.setSelectedSensorPosition(0, 0, 0);//take these out
+    	if(testing)
+    	{
+    		wrist.set(ControlMode.PercentOutput, 0.4);
+    		Timer.delay(.2);
+    		wrist.setSelectedSensorPosition(0, 0, 0);//take these out
+    		wrist.set(ControlMode.PercentOutput, 0);
+    		elevator.setSelectedSensorPosition(0, 0, 0);//take these out
+    	}
     	targetWristPos = wristUp;
     	targetElevatorPos = elevatorDown;
 		wrist.set(ControlMode.Position, 0);
@@ -1113,11 +1278,9 @@ public class Robot extends IterativeRobot {
 		manualCon = false;
 		manualWrist = false;
 		wristMode = up;
-		lastWristDetection = wristMax.get();
 		letUp2 = true;
 		goToHigh= true;
 		elevatorMode = down;
-		setWristUp = false;
 		setElevatorDown = false;
 		letUp4 = true;
 		letUp5 = true;
@@ -1125,6 +1288,7 @@ public class Robot extends IterativeRobot {
 		changedGain = false;
 		runningTestAuto = false;
 		startTestAuto = true;
+		multMode = 1;
     }
 
 
@@ -1154,13 +1318,13 @@ public class Robot extends IterativeRobot {
 	    	//cube intake
 	    	if(xBox.getRawAxis(2) > 0.2)//intake
 	    	{
-	    		intakeL.set(-.65);
-	    		intakeR.set(-.65);
+	    		intakeL.set(-xBox.getRawAxis(2));
+	    		intakeR.set(-xBox.getRawAxis(2));
 	    	}
 	    	else if(xBox.getRawAxis(3) > 0.2)//eject
 	    	{
-	    		intakeL.set(.8);
-	    		intakeR.set(.8);
+	    		intakeL.set(xBox.getRawAxis(3)/2);
+	    		intakeR.set(xBox.getRawAxis(3)/2);
 	    	}
 	    	else
 	    	{
@@ -1168,49 +1332,25 @@ public class Robot extends IterativeRobot {
 	    		intakeR.set(-0.2);
 	    	}
 	    	
-	    	
 	    	//test wrist code//
 	    	if(xBox.getRawButton(3) && !manualWrist && wristMode!=up)//X
 	    	{
-	    		setWristUp = true;
-	    		/*if(wristMode == down)
-	    		{*/
-	    			/*wrist.config_kP(0, upWristP, 10); 
-	    			wrist.config_kI(0, upWristI, 10);//
-	    			wrist.config_kD(0, upWristD, 10);*/
-	    		/*}
-	    		else
-	    		{
-	    			wrist.config_kP(0, upFromMidP, 10); 
-	    			wrist.config_kI(0, upFromMidI, 10);
-	    			wrist.config_kD(0, upFromMidD, 10);
-	    		}*/
+	    		wristFlushed = false;
+	    		wrist.config_kP(0, upWristP, 10); 
+	    		wrist.config_kI(0, upWristI, 10);
+	    		wrist.config_kD(0, upWristD, 10);
 	    		targetWristPos = wristUp;
 	    		wristMode = up;
 	    	}
 	    	else if(xBox.getRawButton(8))//Start
 	    	{
+	    		wristFlushed = false;
 	    		if(!manualWrist && letUp8)
 	    			manualWrist = true;
 	    		else if(letUp8)
 	    			manualWrist = false;
 	    		
 	    		letUp8 = false;
-	    		/*if(wristMode == down)
-	    		{
-	    			wrist.config_kP(0, upToMidP, 10); 
-	    			wrist.config_kI(0, upToMidI, 10);
-	    			wrist.config_kD(0, upToMidD, 10);
-	    		}
-	    		else
-	    		{
-	    			wrist.config_kP(0, downToMidP, 10); 
-	    			wrist.config_kI(0, downToMidI, 10);
-	    			wrist.config_kD(0, downToMidD, 10);
-	    		}
-	    		targetWristPos = wristMiddle;
-	    		wristMode = mid;
-	    		*/
 	    	}
 	    	else if(xBox.getRawButton(7) && !manualWrist &&wristMode!=down)//Back
 	    	{
@@ -1221,22 +1361,13 @@ public class Robot extends IterativeRobot {
 	    		wristMode = down;
 	    	}
 	    	
-	    	if(setWristUp && wrist.getSelectedSensorPosition(0) > -60000)
+	    	if(wristMode == down && !wristFlushed && wrist.getSelectedSensorPosition(0) < -110000)
 	    	{
-	    		setWristUp = false;
-	    		wrist.config_kP(0, upWristP, 10); 
-	    		wrist.config_kI(0, upWristI, 10);
-	    		wrist.config_kD(0, upWristD, 10);
+	    		wristFlushed = true;
+	    		wrist.setIntegralAccumulator(0, 0, 0);
 	    	}
 	    	
 	    	if(debug)System.out.println(":"+manualWrist);
-	    	
-	    	if(lastWristDetection != wristMax.get())
-	    	{
-	    		wrist.setSelectedSensorPosition(0,0,5);
-	    		//System.out.println(wrist.getSelectedSensorPosition(0));
-	    		//wrist.set(ControlMode.Position,0);
-	    	}
 	    		
 	    	if(!manualWrist)
 	    		wrist.set(ControlMode.Position, targetWristPos);
@@ -1246,9 +1377,9 @@ public class Robot extends IterativeRobot {
 	    		
 	    		if(Math.abs(manualWristPower) > 0.2)
 	    		{
-	    			if(manualWristPower > 0 && wrist.getSelectedSensorPosition(0) > wristUp/*-1500*/)
+	    			if(manualWristPower > 0 && wrist.getSelectedSensorPosition(0) > wristUp)
 	    				wrist.set(ControlMode.PercentOutput, 0);
-	    			else if(manualWristPower < 0 && wrist.getSelectedSensorPosition(0) < wristDown/*-160000*/)
+	    			else if(manualWristPower < 0 && wrist.getSelectedSensorPosition(0) < wristDown)
 	    				wrist.set(ControlMode.PercentOutput, 0);
 	    			else
 	    				wrist.set(ControlMode.PercentOutput, manualWristPower);
@@ -1317,9 +1448,6 @@ public class Robot extends IterativeRobot {
 	  			elevatorMode = down;
 	   			targetElevatorPos = elevatorDown; //go to bottom
 	   		}
-	   			
-	    	if(!xBox.getRawButton(2))
-	    		letUp2 = true;
 	    	
 	    	if(setElevatorDown && elevator.getSelectedSensorPosition(0) > elevatorUp / 2)
 	    	{
@@ -1364,7 +1492,8 @@ public class Robot extends IterativeRobot {
 	    	{
 	    		testLoopCount = 0;
 	    		letUp10 = false;
-	    		manualCon = true;//
+	    		manualCon = true;
+	    		manualWrist = false;
 	    	}   
     	}
 	    else
@@ -1372,13 +1501,10 @@ public class Robot extends IterativeRobot {
 	    	//manual elevator controls
 	    	if(pidChoice != 2 || pidChoice != 3)
 	    	{
-	    		if(Math.abs(xBox.getRawAxis(5)) > 0.2 && letUp10) //right stick y-axis
+	    		if(Math.abs(xBox.getRawAxis(5)) > 0.2 && !xBox.getRawButton(10)) //right stick y-axis
 	    			elevator.set(ControlMode.PercentOutput, xBox.getRawAxis(5));
 	    		else
 	    			elevator.set(ControlMode.PercentOutput, -0.1);
-	    	
-	    		if(xBox.getRawButton(2))//B
-	    			elevator.setSelectedSensorPosition(0, 0, 0);
 	    	}
 	    	
 	    	//cube intake
@@ -1410,22 +1536,22 @@ public class Robot extends IterativeRobot {
 		    {
 		    	letUp5 = false;
 		    	if(pidGain == 1)
-		    		currentMultP-=0.1;
+		    		currentMultP-=(0.1*multMode);
 		    	else if(pidGain == 2)
-		    		currentMultI-=0.1;
+		    		currentMultI-=(0.1*multMode);
 		    	else if(pidGain == 3)
-		    		currentMultD-=0.1;
+		    		currentMultD-=(0.1*multMode);
 		    	changedGain = true;
 		    }
 		    else if(xBox.getRawButton(6) && letUp6)//RB
 		    {
 		    	letUp6 = false;
 		    	if(pidGain==1)
-		    		currentMultP+=0.1;
+		    		currentMultP+=(0.1*multMode);
 		    	else if(pidGain==2)
-		    		currentMultI+=0.1;
+		    		currentMultI+=(0.1*multMode);
 		    	else if(pidGain==3)
-		    		currentMultD+=0.1;
+		    		currentMultD+=(0.1*multMode);
 		    	changedGain = true;
 		    }
 		    	
@@ -1437,19 +1563,16 @@ public class Robot extends IterativeRobot {
 		    		if(pidGain == 1)//P
 		    		{
 		    			currentPValue = currentMultP * baseDownWristP;
-		    			wrist.config_kP(0, currentPValue, 5);
 		    			downWristP = currentPValue;
 		    		}
 		    		else if(pidGain == 2)//I
 		    		{
 		    			currentIValue = currentMultI * baseDownWristI;
-		    			wrist.config_kI(0, currentIValue, 5);
 		    			downWristI = currentIValue;
 		    		}
 		    		else if(pidGain == 3)//D
 		    		{
 		    			currentDValue = currentMultD * baseDownWristD;
-		    			wrist.config_kD(0, currentDValue, 5);
 		    			downWristD = currentDValue;
 		    		}
 		    		else
@@ -1460,19 +1583,16 @@ public class Robot extends IterativeRobot {
 		    		if(pidGain == 1)//P
 		    		{
 		    			currentPValue = currentMultP * baseUpElevatorP;
-		    			//elevator.config_kP(0, currentPValue, 5);
 		    			upElevatorP = currentPValue;
 		    		}
 		    		else if(pidGain == 2)//I
 		    		{
 		    			currentIValue = currentMultI * baseUpElevatorI;
-		    			//elevator.config_kI(0, currentIValue, 5);
 		    			upElevatorI = currentIValue;
 		    		}
 		    		else if(pidGain == 3)//D
 		    		{
 		    			currentDValue = currentMultD * baseUpElevatorD;
-		    			//elevator.config_kD(0, currentDValue, 5);
 		    			upElevatorD = currentDValue;
 		    		}
 		    		else
@@ -1483,19 +1603,16 @@ public class Robot extends IterativeRobot {
 		    		if(pidGain == 1)//P
 		    		{
 		    			currentPValue = currentMultP * baseDownElevatorP;
-		    			//elevator.config_kP(0, currentPValue, 5);
 		    			downElevatorP = currentPValue;
 		    		}
 		    		else if(pidGain == 2)//I
 		    		{
 		    			currentIValue = currentMultI * baseDownElevatorI;
-		    			//elevator.config_kI(0, currentIValue, 5);
 		    			downElevatorI = currentIValue;
 		    		}
 		    		else if(pidGain == 3)//D
 		    		{
 		    			currentDValue = currentMultD * baseDownElevatorD;
-		    			//elevator.config_kD(0, currentDValue, 5);
 		    			downElevatorD = currentDValue;
 		    		}
 		    		else
@@ -1529,19 +1646,16 @@ public class Robot extends IterativeRobot {
 		    		if(pidGain == 1)//P
 		    		{
 		    			currentPValue = currentMultP * baseUpWristP;
-		    			wrist.config_kP(0, currentPValue, 5);
 		    			upWristP = currentPValue;
 		    		}
 		    		else if(pidGain == 2)//I
 		    		{
 		    			currentIValue = currentMultI * baseUpWristI;
-		    			wrist.config_kI(0, currentIValue, 5);
 		    			upWristI = currentIValue;
 		    		}
 		    		else if(pidGain == 3)//D
 		    		{
 		    			currentDValue = currentMultD * baseUpWristD;
-		    			wrist.config_kD(0, currentDValue, 5);
 		    			upWristD = currentDValue;
 		    		}
 		    		else
@@ -1587,66 +1701,66 @@ public class Robot extends IterativeRobot {
 		    {
 		    	if(pidChoice == 1)//downWrist
 		    	{
-		    		if(pidGain == 1)//P
+		    		if(pidGain == 1 && baseDownWristP == 0)//P
 		    			baseDownWristP = 0.001;
-		    		else if(pidGain == 2)//I
+		    		else if(pidGain == 2 && baseDownWristI == 0)//I
 		    			baseDownWristI = 0.001;
-		    		else if(pidGain == 3)//D
+		    		else if(pidGain == 3 && baseDownWristD == 0)//D
 		    			baseDownWristD = 0.001;
 		    		else
 		    			System.out.println("Problem with creating base value:"+pidGain);
 		    	}
 		    	else if(pidChoice == 2)//upElevator
 		    	{
-		    		if(pidGain == 1)//P
+		    		if(pidGain == 1 && baseUpElevatorP == 0)//P
 		    			baseUpElevatorP = 0.001;
-		    		else if(pidGain == 2)//I
+		    		else if(pidGain == 2 && baseUpElevatorI == 0)//I
 		    			baseUpElevatorI = 0.001;
-		    		else if(pidGain == 3)//D
+		    		else if(pidGain == 3 && baseUpElevatorD == 0)//D
 		    			baseUpElevatorD = 0.001;
 		    		else
 		    			System.out.println("Problem with creating base value:"+pidGain);
 		    	}
 		    	else if(pidChoice == 3)//downElevator
 		    	{
-		    		if(pidGain == 1)//P
+		    		if(pidGain == 1 && baseDownElevatorP == 0)//P
 		    			baseDownElevatorP = 0.001;
-		    		else if(pidGain == 2)//I
+		    		else if(pidGain == 2 && baseDownElevatorI == 0)//I
 		    			baseDownElevatorI = 0.001;
-		    		else if(pidGain == 3)//D
+		    		else if(pidGain == 3 && baseDownElevatorD == 0)//D
 		    			baseDownElevatorD = 0.001;
 		    		else
 		    			System.out.println("Problem with creating base value:"+pidGain);
 		    	}
 		    	else if(pidChoice == 4)//positionPID
 		    	{
-		    		if(pidGain == 1)//P
+		    		if(pidGain == 1 && basePositionP == 0)//P
 		    			basePositionP = 0.001;
-		    		else if(pidGain == 2)//I
+		    		else if(pidGain == 2 && basePositionI == 0)//I
 		    			basePositionI = 0.001;
-		    		else if(pidGain == 3)//D
+		    		else if(pidGain == 3 && basePositionD == 0)//D
 		    			basePositionD = 0.001;
 		    		else
 		    			System.out.println("Problem with creating base value:"+pidGain);
 		    	}
 		    	else if(pidChoice == 5)//upWrist
 		    	{
-		    		if(pidGain == 1)//P
+		    		if(pidGain == 1 && baseUpWristP == 0)//P
 		    			baseUpWristP = 0.001;
-		    		else if(pidGain == 2)//I
+		    		else if(pidGain == 2 && baseUpWristI == 0)//I
 		    			baseUpWristI = 0.001;
-		    		else if(pidGain == 3)//D
+		    		else if(pidGain == 3 && baseUpWristD == 0)//D
 		    			baseUpWristD = 0.001;
 		    		else
 		    			System.out.println("Problem with creating base value:"+pidGain);
 		    	}
 		    	else if(pidChoice == 6)//turningPID
 		    	{
-		    		if(pidGain == 1)//P
+		    		if(pidGain == 1 && baseTurningP == 0)//P
 		    			baseTurningP = 0.001;
-		    		else if(pidGain == 2)//I
+		    		else if(pidGain == 2 && baseTurningI == 0)//I
 		    			baseTurningI = 0.001;
-		    		else if(pidGain == 3)//D
+		    		else if(pidGain == 3 && baseTurningD == 0)//D
 		    			baseTurningD = 0.001;
 		    		else
 		    			System.out.println("Problem with creating base value:"+pidGain);
@@ -1659,11 +1773,14 @@ public class Robot extends IterativeRobot {
 		    {
 		    	if(xBox.getRawButton(3) && !manualWrist && wristMode!=up)//X
 		    	{
-		    		setWristUp = true;
+		    		wristFlushed = false;
+		    		wrist.config_kP(0, upWristP, 10); 
+		    		wrist.config_kI(0, upWristI, 10);
+		    		wrist.config_kD(0, upWristD, 10);
 		    		targetWristPos = wristUp;
 		    		wristMode = up;
 		    	}
-		    	else if(xBox.getRawButton(7) && !manualWrist &&wristMode!=down)//Back
+		    	else if(xBox.getRawButton(7) && !manualWrist && wristMode!=down)//Back
 		    	{
 		    		wrist.config_kP(0, downWristP, 10); 
 		    		wrist.config_kI(0, downWristI, 10);
@@ -1672,20 +1789,13 @@ public class Robot extends IterativeRobot {
 		    		wristMode = down;
 		    	}
 	    	
-		    	if(setWristUp && wrist.getSelectedSensorPosition(0) > -60000)
+		    	if(wristMode == down && !wristFlushed && wrist.getSelectedSensorPosition(0) < -110000)
 		    	{
-		    		setWristUp = false;
-		    		wrist.config_kP(0, upWristP, 10); 
-		    		wrist.config_kI(0, upWristI, 10);
-		    		wrist.config_kD(0, upWristD, 10);
+		    		wristFlushed = true;
+		    		wrist.setIntegralAccumulator(0, 0, 0);
 		    	}
-	    	
+		    	
 		    	if(debug)System.out.println(":"+manualWrist);
-	    	
-		    	if(lastWristDetection != wristMax.get())
-		    	{
-		    		wrist.setSelectedSensorPosition(0,0,5);
-		    	}
 	    		
 		    	wrist.set(ControlMode.Position, targetWristPos);
 	    	}
@@ -1767,6 +1877,24 @@ public class Robot extends IterativeRobot {
 		    
 			winch.set(0);
 			
+			if(xBox.getRawButton(2) && letUp2)
+			{
+				letUp2 = false;
+				
+				if(multMode == 2)
+					multMode = 1;
+				else if(multMode == 1)
+					multMode = 0.5;
+				else if(multMode == 0.5)
+					multMode = 0.1;
+				else if(multMode == 0.1)
+					multMode = 10;
+				else if(multMode == 10)
+					multMode = 2;
+				else
+					System.out.println("Error with multMode:"+multMode);
+			}
+			
 			//change control layout
 		    if(xBox.getRawButton(10) && letUp10)
 		    {
@@ -1778,17 +1906,270 @@ public class Robot extends IterativeRobot {
 		    	letUp10 = false;
 		    	manualCon = false;
 		    }
-			
-			SmartDashboard.putNumber("PID Choice", pidChoice);//1 is down wrist
-		    SmartDashboard.putNumber("PID Gain", pidGain);
-		    SmartDashboard.putNumber("currentMultP", currentMultP);
-		    SmartDashboard.putNumber("currentMultI", currentMultI);
-		    SmartDashboard.putNumber("currentMultD", currentMultD);
-		    SmartDashboard.putNumber("Current P Value", currentPValue);
-		    SmartDashboard.putNumber("Current I Value", currentIValue);
-		    SmartDashboard.putNumber("Current D Value", currentDValue);
 	    }
+    	
+    	if(!manualCon && testing)
+    	{		   
+		    if(tuningController.getRawButton(5) && letUp5)//LB
+		    {
+		    	letUp5 = false;
+		    	if(pidGain == 1)
+		    		currentMultP-=(0.1*multMode);
+		    	else if(pidGain == 2)
+		    		currentMultI-=(0.1*multMode);
+		    	else if(pidGain == 3)
+		    		currentMultD-=(0.1*multMode);
+		    	changedGain = true;
+		    }
+		    else if(tuningController.getRawButton(6) && letUp6)//RB
+		    {
+		    	letUp6 = false;
+		    	if(pidGain==1)
+		    		currentMultP+=(0.1*multMode);
+		    	else if(pidGain==2)
+		    		currentMultI+=(0.1*multMode);
+		    	else if(pidGain==3)
+		    		currentMultD+=(0.1*multMode);
+		    	changedGain = true;
+		    }   
+		    
+		    if(changedGain)
+		    {
+		    	changedGain = false;
+		    	if(pidChoice == 1)//wristDown
+		    	{
+		    		if(pidGain == 1)//P
+		    		{
+		    			currentPValue = currentMultP * baseDownWristP;
+		    			downWristP = currentPValue;
+		    		}
+		    		else if(pidGain == 2)//I
+		    		{
+		    			currentIValue = currentMultI * baseDownWristI;
+		    			downWristI = currentIValue;
+		    		}
+		    		else if(pidGain == 3)//D
+		    		{
+		    			currentDValue = currentMultD * baseDownWristD;
+		    			downWristD = currentDValue;
+		    		}
+		    		else
+		    			System.out.println("Problem with with gain choice:"+pidGain);
+		    	}
+		    	else if(pidChoice == 2)//elevatorUp
+		    	{
+		    		if(pidGain == 1)//P
+		    		{
+		    			currentPValue = currentMultP * baseUpElevatorP;
+		    			upElevatorP = currentPValue;
+		    		}
+		    		else if(pidGain == 2)//I
+		    		{
+		    			currentIValue = currentMultI * baseUpElevatorI;
+		    			upElevatorI = currentIValue;
+		    		}
+		    		else if(pidGain == 3)//D
+		    		{
+		    			currentDValue = currentMultD * baseUpElevatorD;
+		    			upElevatorD = currentDValue;
+		    		}
+		    		else
+		    			System.out.println("Problem with with gain choice:"+pidGain);
+		    	}
+		    	else if(pidChoice == 3)//elevatorDown
+		    	{
+		    		if(pidGain == 1)//P
+		    		{
+		    			currentPValue = currentMultP * baseDownElevatorP;
+		    			downElevatorP = currentPValue;
+		    		}
+		    		else if(pidGain == 2)//I
+		    		{
+		    			currentIValue = currentMultI * baseDownElevatorI;
+		    			downElevatorI = currentIValue;
+		    		}
+		    		else if(pidGain == 3)//D
+		    		{
+		    			currentDValue = currentMultD * baseDownElevatorD;
+		    			downElevatorD = currentDValue;
+		    		}
+		    		else
+		    			System.out.println("Problem with with gain choice:"+pidGain);
+		    	}
+		    	else if(pidChoice == 4)//positionPID
+		    	{
+		    		if(pidGain == 1)//P
+		    		{
+		    			currentPValue = currentMultP * basePositionP;
+		    			positionP = currentPValue;
+		    			positionPID.setP(positionP);
+		    		}
+		    		else if(pidGain == 2)//I
+		    		{
+		    			currentIValue = currentMultI * basePositionI;
+		    			positionI = currentIValue;
+		    			positionPID.setI(positionI);
+		    		}
+		    		else if(pidGain == 3)//D
+		    		{
+		    			currentDValue = currentMultD * basePositionD;
+		    			positionD = currentDValue;
+		    			positionPID.setD(positionD);
+		    		}
+		    		else
+		    			System.out.println("Problem with with gain choice:"+pidGain);
+		    	}
+		    	else if(pidChoice == 5)//wristUp
+		    	{
+		    		if(pidGain == 1)//P
+		    		{
+		    			currentPValue = currentMultP * baseUpWristP;
+		    			upWristP = currentPValue;
+		    		}
+		    		else if(pidGain == 2)//I
+		    		{
+		    			currentIValue = currentMultI * baseUpWristI;
+		    			upWristI = currentIValue;
+		    		}
+		    		else if(pidGain == 3)//D
+		    		{
+		    			currentDValue = currentMultD * baseUpWristD;
+		    			upWristD = currentDValue;
+		    		}
+		    		else
+		    			System.out.println("Problem with with gain choice"+pidGain);
+		    	}
+		    	else if(pidChoice == 6)//turningPID
+		    	{
+		    		if(pidGain == 1)//P
+		    		{
+		    			currentPValue = currentMultP * baseTurningP;
+		    			turningPID.setP(currentPValue);
+		    			turningP = currentPValue;
+		    		}
+		    		else if(pidGain == 2)//I
+		    		{
+		    			currentIValue = currentMultI * baseTurningI;
+		    			turningPID.setI(currentIValue);
+		    			turningI = currentIValue;
+		    		}
+		    		else if(pidGain == 3)//D
+		    		{
+		    			currentDValue = currentMultD * baseTurningD;
+		    			turningPID.setD(currentDValue);
+		    			turningD = currentDValue;
+		    		}
+		    		else
+		    			System.out.println("Problem with with gain choice"+pidGain);
+		    	}
+		    	else
+		    		System.out.println("Problem with tuning choice:"+pidChoice);
+		    }
+		    
+		    
+		    if(tuningController.getRawButton(4) && letUp4)
+		    {
+		    	letUp4 = false;
+		    	pidGain+=1;
+		    	if(pidGain > 3)
+		    		pidGain = 1;
+		    }
+		   
+		    if(tuningController.getRawButton(1))
+		    {
+		    	if(pidChoice == 1)//downWrist
+		    	{
+		    		if(pidGain == 1 && baseDownWristP == 0)//P
+		    			baseDownWristP = 0.001;
+		    		else if(pidGain == 2 && baseDownWristI == 0)//I
+		    			baseDownWristI = 0.001;
+		    		else if(pidGain == 3 && baseDownWristD == 0)//D
+		    			baseDownWristD = 0.001;
+		    		else
+		    			System.out.println("Problem with creating base value:"+pidGain);
+		    	}
+		    	else if(pidChoice == 2)//upElevator
+		    	{
+		    		if(pidGain == 1 && baseUpElevatorP == 0)//P
+		    			baseUpElevatorP = 0.001;
+		    		else if(pidGain == 2 && baseUpElevatorI == 0)//I
+		    			baseUpElevatorI = 0.001;
+		    		else if(pidGain == 3 && baseUpElevatorD == 0)//D
+		    			baseUpElevatorD = 0.001;
+		    		else
+		    			System.out.println("Problem with creating base value:"+pidGain);
+		    	}
+		    	else if(pidChoice == 3)//downElevator
+		    	{
+		    		if(pidGain == 1 && baseDownElevatorP == 0)//P
+		    			baseDownElevatorP = 0.001;
+		    		else if(pidGain == 2 && baseDownElevatorI == 0)//I
+		    			baseDownElevatorI = 0.001;
+		    		else if(pidGain == 3 && baseDownElevatorD == 0)//D
+		    			baseDownElevatorD = 0.001;
+		    		else
+		    			System.out.println("Problem with creating base value:"+pidGain);
+		    	}
+		    	else if(pidChoice == 4)//positionPID
+		    	{
+		    		if(pidGain == 1 && basePositionP == 0)//P
+		    			basePositionP = 0.001;
+		    		else if(pidGain == 2 && basePositionI == 0)//I
+		    			basePositionI = 0.001;
+		    		else if(pidGain == 3 && basePositionD == 0)//D
+		    			basePositionD = 0.001;
+		    		else
+		    			System.out.println("Problem with creating base value:"+pidGain);
+		    	}
+		    	else if(pidChoice == 5)//upWrist
+		    	{
+		    		if(pidGain == 1 && baseUpWristP == 0)//P
+		    			baseUpWristP = 0.001;
+		    		else if(pidGain == 2 && baseUpWristI == 0)//I
+		    			baseUpWristI = 0.001;
+		    		else if(pidGain == 3 && baseUpWristD == 0)//D
+		    			baseUpWristD = 0.001;
+		    		else
+		    			System.out.println("Problem with creating base value:"+pidGain);
+		    	}
+		    	else if(pidChoice == 6)//turningPID
+		    	{
+		    		if(pidGain == 1 && baseTurningP == 0)//P
+		    			baseTurningP = 0.001;
+		    		else if(pidGain == 2 && baseTurningI == 0)//I
+		    			baseTurningI = 0.001;
+		    		else if(pidGain == 3 && baseTurningD == 0)//D
+		    			baseTurningD = 0.001;
+		    		else
+		    			System.out.println("Problem with creating base value:"+pidGain);
+		    	}
+		    	else
+		    		System.out.println("Problem with selected PID setup:"+pidChoice);
+		    }
+		    
+			if(tuningController.getRawButton(2) && twoLetUp2)
+			{
+				letUp2 = false;
+				
+				if(multMode == 2)
+					multMode = 1;
+				else if(multMode == 1)
+					multMode = 0.5;
+				else if(multMode == 0.5)
+					multMode = 0.1;
+				else if(multMode == 0.1)
+					multMode = 10;
+				else if(multMode == 10)
+					multMode = 2;
+				else
+					System.out.println("Error with multMode:"+multMode);
+			}
+    	}
+    	
     	if(debug)System.out.println(manualCon);
+    	
+    	if(!tuningController.getRawButton(2))
+    		letUp2 = true;
     	
     	if(!xBox.getRawButton(4))
 	    	letUp4 = true;
@@ -1805,9 +2186,35 @@ public class Robot extends IterativeRobot {
     	if(!xBox.getRawButton(10))
     		letUp10 = true;
     	
-    	testLoopCount++;
-    	lastWristDetection = wristMax.get();
+    	if(!tuningController.getRawButton(2))
+    		twoLetUp2 = true;
     	
+    	if(!tuningController.getRawButton(4))
+	    	twoLetUp4 = true;
+    	
+    	if(!tuningController.getRawButton(5))
+	    	twoLetUp5 = true;
+	    
+	    if(!tuningController.getRawButton(6))
+	    	twoLetUp6 = true;
+	    
+	    if(!tuningController.getRawButton(8))
+    		twoLetUp8 = true;
+    	
+    	if(!tuningController.getRawButton(10))
+    		twoLetUp10 = true;
+    	
+    	testLoopCount++;
+    	
+    	SmartDashboard.putNumber("multMode", multMode*0.1);
+		SmartDashboard.putNumber("PID Choice", pidChoice);//1 is down wrist
+	    SmartDashboard.putNumber("PID Gain", pidGain);
+	    SmartDashboard.putNumber("currentMultP", currentMultP);
+	    SmartDashboard.putNumber("currentMultI", currentMultI);
+	    SmartDashboard.putNumber("currentMultD", currentMultD);
+	    SmartDashboard.putNumber("Current P Value", currentPValue);
+	    SmartDashboard.putNumber("Current I Value", currentIValue);
+	    SmartDashboard.putNumber("Current D Value", currentDValue);
     	SmartDashboard.putNumber("elevatorMode", elevatorMode);
     	SmartDashboard.putNumber("Elevator Position", elevator.getSelectedSensorPosition(0));
     	SmartDashboard.putNumber("Wrist Position", wrist.getSelectedSensorPosition(0));
@@ -1817,14 +2224,16 @@ public class Robot extends IterativeRobot {
     	SmartDashboard.putNumber("ahrs", ahrs.getAngle());
     	SmartDashboard.putNumber("forward", xBox.getRawAxis(1));
     	SmartDashboard.putNumber("turn", xBox.getRawAxis(0));
-    	SmartDashboard.putBoolean("wristMax", wristMax.get());
     	SmartDashboard.putBoolean("lowElevator", lowElevator.get());
     	SmartDashboard.putBoolean("highElevator", highElevator.get());//
     }
     
+    public void testInit(){
+    	leftSide.reset();
+    }
+    
     public void testPeriodic(){
-    	System.out.println(wrist.getSelectedSensorPosition(0));
-    	//System.out.println(wristMax.get());
+    	//System.out.println(wrist.getSelectedSensorPosition(0));
     	//System.out.println(leftSide.get());
     	//System.out.println(lowElevator.get()+":"+highElevator.get());
     }
