@@ -23,7 +23,7 @@ import edu.wpi.first.wpilibj.SPI;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
-//                                2018 Bot Code// v1.3.4.2 //added fine tuning to RTU
+//                                2018 Bot Code// v1.3.4.3 //added fine tuning to RTU
 									//removed automatic write to talon on wrist tuning
 									//remeber to rework auto?
 									//fixed safety timeout bug, and attempted to fix a bug with
@@ -40,6 +40,11 @@ import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 @SuppressWarnings("deprecation")
 
 public class Robot extends IterativeRobot {
+	
+	boolean elevatorInitialized;
+	
+	boolean reachedPosition;
+	boolean movingUp;
 	
 	boolean twoLetUp2;
 	boolean twoLetUp4;
@@ -92,8 +97,8 @@ public class Robot extends IterativeRobot {
 	double timeReached;//the time we found we were within an inch of the setpoint
 	
 	final static boolean enableManual = false;
-	final static boolean testing = true;//
-	final static boolean debug = false;//debug constant for turning multiple debug outputs on and off
+	final static boolean testing = false;//
+	final static boolean debug = true;//debug constant for turning multiple debug outputs on and off
 													// Change before compiling.
 	int counter = 0;
 	
@@ -200,7 +205,7 @@ public class Robot extends IterativeRobot {
 	private SendableChooser testMode;			//Are we in testing mode
 	private SendableChooser testCase;			//What case are we testing
 	private SendableChooser farSideAccess;		//Are we allowed to cross the field
-													//(only in side pref)
+	private SendableChooser scaleAccess;		//Are we allowed to go to the scale												//(only in side pref)
 	
 	SRF_PID positionPID;
 	SRF_PID turningPID;
@@ -233,7 +238,7 @@ public class Robot extends IterativeRobot {
 	double   baseUpWristP = upWristP,   baseUpWristI = upWristI,     baseUpWristD = upWristD;
 	
 	int elevatorUp = -1600000, elevatorMid = -475000, elevatorLowScale = -1370288, elevatorDown = -34000;//was -23500
-	int    wristUp = -6000,        wristMiddle = -89250,     wristDown = -136000;
+	int    wristUp = -10000,        wristMiddle = -89250,     wristDown = -136000;
 	int wristMode, elevatorMode;
 	
 	boolean manualCon = false; //Used to change whether using manual controls for teleop
@@ -276,7 +281,7 @@ public class Robot extends IterativeRobot {
     	
     	robot = new RobotDrive(frontLeft, rearLeft, frontRight, rearRight);
     	xBox = new Joystick(0);
-    	if(testing)tuningController = new Joystick(1);
+    	//if(testing)tuningController = new Joystick(1);
     	
     	ahrs = new AHRS(SPI.Port.kMXP);
     	
@@ -299,6 +304,11 @@ public class Robot extends IterativeRobot {
     	placeCube.addDefault("Drive", 2);
     	SmartDashboard.putData("placeCube", placeCube);
 
+    	scaleAccess = new SendableChooser();
+    	scaleAccess.addDefault("Disable Scale Access", 0);
+    	scaleAccess.addObject("Enable Scale Access", 1);
+    	SmartDashboard.putData("scaleAccess", scaleAccess);
+    	
     	farSideAccess = new  SendableChooser();
     	farSideAccess.addDefault("Disable Cross Field", 0);
     	farSideAccess.addObject("Enable Cross Field", 1);
@@ -364,6 +374,12 @@ public class Robot extends IterativeRobot {
      */
 
     public void autonomousInit() {
+    	
+    	elevator.set(ControlMode.PercentOutput, -0.3);
+    	Timer.delay(.2);
+    	elevator.set(ControlMode.PercentOutput, -0.005);
+    	
+    	elevatorInitialized = false;
     	elevatorMode = down;
     	wristFlushed = false;
     	wrist.set(ControlMode.PercentOutput, 0.2);
@@ -591,7 +607,7 @@ public class Robot extends IterativeRobot {
 		auto[16][5] = autoStates.NA;
 		auto[16][6] = autoStates.NA;
 		auto[16][7] = autoStates.NA;
-		auto[16][8] = autoStates.NA;		
+		auto[16][8] = autoStates.NA;
 		auto[16][9] = autoStates.NA;
 
  		auto[17][0] = autoStates.FarSideBackToSwitch; 
@@ -680,15 +696,20 @@ public class Robot extends IterativeRobot {
     				if(switchSide == ourSide) // go for the switch on our side
     					autoID = 1;
     				else					 // go for the scale on our side
-    					autoID = 3;
+    				{
+    					if((int) scaleAccess.getSelected() == 1)
+    						autoID = 3;
+    					else
+    						autoID = 0;
+    				}
     			}
     			else // the plates share a side
     			{
     				if((int) priorityPlace.getSelected() == 2) // if going to scale
     				{
-    					if(scaleSide == ourSide) //if the scale is on our side
+    					if(scaleSide == ourSide && ((int) scaleAccess.getSelected() == 1)) //if the scale is on our side
     						autoID = 3;
-    					else if((int) farSideAccess.getSelected() == 1)//go to the far scale
+    					else if((int) farSideAccess.getSelected() == 1 && ((int) scaleAccess.getSelected() == 1))//go to the far scale
     						autoID = 4;									//if we can
     					else
     						autoID = 0;
@@ -708,10 +729,12 @@ public class Robot extends IterativeRobot {
     		{
     			if((int) priorityPlace.getSelected() == 2) // if going to scale
     			{
-    				if(scaleSide == ourSide)//if the scale is on our side
+    				if(scaleSide == ourSide && ((int) scaleAccess.getSelected() == 1))//if the scale is on our side
     					autoID = 3;
-    				else
+    				else if((int) scaleAccess.getSelected() == 1)
     					autoID = 4;
+    				else
+    					autoID = 0;
     			}
     			else // going to switch 
     			{
@@ -762,14 +785,16 @@ public class Robot extends IterativeRobot {
 		// to travel 24 feet takes approx 4 seconds with 2 CIM drive
 		// Both observations were with the throttle restricted to .9
 		// Max effective speed is thus about 6 feet per sec, or 1/3 of theoretical max of 16 ft/sec. Use .2 factor to avoid early terminations
-																	  // To this add a half second fudge factor. 
+		// To this add a half second fudge factor. 
 		positionPID.setPID(positionP, positionI, positionD);//this could be moved to autonomousInit() (or RobotInit())
+		if(safetyTimeout < 3)safetyTimeout = 3;
 	}
 	
 	
 	
 	public void advanceToNextAutoCase() //correct these values. May be mirrored by turningMult.
 	{
+		reachedPosition = false;
 		targetTurn = 0;
 		setpointReached = false;
 		intakeL.set(-0.2);
@@ -939,6 +964,7 @@ public class Robot extends IterativeRobot {
 
 	public void autonomousPeriodic()
 	{
+		
 		SmartDashboard.putNumber("leftSide", leftSide.get());
 		
 		currentTime = t.get();
@@ -987,6 +1013,12 @@ public class Robot extends IterativeRobot {
 			case FarSideBackToSwitch:
 			case FarSideOnToScale:
 			case DriveToSwitchSide:
+				if((currentTime - startTime) > safetyTimeout && !potentiallyArrived)
+				{
+					System.out.println("Safety Timeout at autoStep:"+autoStep);
+					autoStep = 8;
+					advanceToNextAutoCase();
+				}
 				
 				if(leftSide.get() > 8*countsPerInch)
 					positionPID.setLimits(0.8, -0.8);
@@ -995,147 +1027,36 @@ public class Robot extends IterativeRobot {
 				else
 					positionPID.setLimits(0.4, -0.4);
 				
-				if(!potentiallyArrived)
-				{
-					//positionPID.setLimits(0.5,-0.5);
-					output = positionPID.computePID(currentPosition, currentTime);
-					directionControl = -0.3-(turnSetpoint - ahrs.getAngle())/navXCorrect;
-					//directionControl = 0;
+				output = positionPID.computePID(currentPosition, currentTime);
+				directionControl = -0.35-(turnSetpoint - ahrs.getAngle())/navXCorrect;
+				robot.arcadeDrive(output, directionControl);
 				
-					robot.arcadeDrive(output, directionControl);
-				}
-				else
+				if(!potentiallyArrived && Math.abs(currentPosition - positionSetpoint) < 6*countsPerInch)
 				{
-					if(currentPosition < positionSetpoint)
-					{
-						if(setpointReached)
-							advanceToNextAutoCase();
-						else
-							robot.arcadeDrive(-0.35, 0);
-					}
-					else
-					{
-						setpointReached = true;
-						robot.arcadeDrive(0.35, 0);
-					}
+					potentiallyArrived = true;
+					timeReached = currentTime;
 				}
-				
-				if(debug && (counter % 20 == 0))
-					System.out.println(output+"::"+positionSetpoint+":"+currentPosition+"::"+currentTime);
-
-				// 	if(positionSetpoint-currentPosition<48*countsPerInch)
-				//		positionPID.setPID(positionCloseP, positionCloseI, positionCloseD);
-
-				// If safety timeout exceeded, pretend we are close, set potentiallyArrived flag and arrivalTime normally, but set 
-				// special values for tolerance and settle timeout.
-				// Otherwise, test for normal arrival such that encoder > (setPoint less 3" allowance), 
-				// in which case again set the "potentiallyArrived" flag, the arrival time, and the normal tolerance and settle timeout.
-				// Once potentiallyArrived is set, safetyTimeout is no longer checked, only settleTime.
-				// 1 second should be more than enough PID settle time, if tuned well.
-				// We then test for position being within one inch for 100 ms. If so, advance to next autoStep.
-
-				// To cover the case where the setPoint is never actually crossed (because the robot stops short),
-				// also test for being within a small threshold distance of the positionSetpoint (1" ?)
-				// If a timeout occurs without meeting setpoint threshold, something is wrong. Make a last ditch attempt to salvage 
-				// something by enlarging the thresholds. If still no luck, advance the state to "N/A" (assumed to always be
-				// stored as the last autoStep index) to avoid unknown difficulties (and maybe arena fouls).
-
-				if (! potentiallyArrived)
-				{
-					if ((currentTime-startTime) > safetyTimeout)	//safety timeout now triggers potential arrival as last chance try
-					{
-						autoStep = 8;
-						advanceToNextAutoCase();
-						// Always print on timeout condition, DEBUG defined or not!
-						/*System.out.println("Pos safety timeout "+autoID+":"+autoStep+" "+positionSetpoint+" : "+currentPosition+" :: "+(currentTime-startTime));			
-						potentiallyArrived = true;
-						arrivalTime = currentTime;
-						settleTime = 0.5;					// On safety timeout, be more stingy on settle time allowed,
-						positionArrivalThreshold = 3;		// but be more generous on allowed tolerance.
-						withinRange = false;*/
-					}//3
-					else if (currentPosition > positionSetpoint*0.5)//if the robot is 3 inches short
-					{
-						potentiallyArrived = true;
-						/*arrivalTime = currentTime;
-						settleTime = 2;					// On regular arrival trigger, be more generous on settle time,
-						arrivalThreshold = 1;	// but more stingy on allowed tolerance.
-						withinRange = false;*/
-					}
-				} /*else
-				{								// "potentiallyArrived" flag is now true, so at the least we are close. 
-												// Test for final arrival (within threshold for more than 100 ms),
-												// and end case if so.
-												// But first check if settle time has expired, and end if so
-					/*if((currentTime - arrivalTime) > settleTime)
-					{
-						System.out.println("Pos settle timeout "+autoID+":"+autoStep+" "+positionSetpoint+" : "+currentPosition+" :: "+(currentTime-startTime));	
-						if (Math.abs(currentPosition-positionSetpoint)>(6*countsPerInch)) // On settle timeout, increase tolerance to 6"!
-																						  // Risky, but it might pay off!
-							autoStep = 8;												  // However, if greater than 6" off, abandon goal.
-						advanceToNextAutoCase();										  // Either way, we're finally done here.
-					} else if (! withinRange )
-					{	// We think we are out of range, see if the PID has taken us into (or back into) range.
-						if (Math.abs(currentPosition-positionSetpoint)<=(arrivalThreshold*countsPerInch))
-						{
-							withinRange=true;
-							timeReached = currentTime;
-						}
-					} else {					// we were withinRange earlier, see if we still are
-						if (Math.abs(currentPosition-positionSetpoint) > (arrivalThreshold*countsPerInch)) {
-							withinRange=false;	// Nope, clear the flag and try again next time through the periodic loop
-						} else if ((currentTime-timeReached) > .1)
-						{						// Yes, we're still within allowed tolerance, and have been so for 100 ms. or more.
-												// Call it successfully done!
-							advanceToNextAutoCase();
-							if (debug) System.out.println("End "+autoID+":"+autoStep+" "+output+" :: "+positionSetpoint+" : "+currentPosition+" :: "+currentTime+" : "+arrivalTime);
-						}
-					}
-				}*/
+				else if(potentiallyArrived && currentTime - timeReached > 1)
+					advanceToNextAutoCase();
 				break;
 			case TurnOpposite:
 			case Turn:
 			case TurnOpposite45:
 			case Turn45:
 				//if you haven't gone half way then compute the PID
-				if(Math.abs(currentAngle - turnSetpoint) > targetTurn*0.5)
+				directionControl = turningPID.computePID(currentAngle, currentTime);
+				robot.arcadeDrive(0, directionControl);
+				
+				if(Math.abs(currentAngle - turnSetpoint) < 5 && !reachedPosition)
 				{
-					directionControl = turningPID.computePID(currentAngle, currentTime);
-					robot.arcadeDrive(0, directionControl);
+					reachedPosition = true;
+					timeReached = currentTime;
 				}
-				else
+				else if(currentTime - timeReached > 1 && reachedPosition)
 				{
-					if(turnDirection*turningMult==1)//turning right
-					{
-						if(currentAngle < turnSetpoint)
-						{
-							if(setpointReached)
-								advanceToNextAutoCase();
-							else
-								robot.arcadeDrive(0, -0.6);
-						}
-						else
-						{
-							setpointReached = true;
-							robot.arcadeDrive(0, 0.55);
-						}
-					}
-					else
-					{
-						if(currentAngle > turnSetpoint)
-						{
-							if(setpointReached)
-								advanceToNextAutoCase();
-							else
-								robot.arcadeDrive(0, 0.6);
-						}
-						else
-						{
-							setpointReached = true;
-							robot.arcadeDrive(0, -0.55);
-						}
-					}
+					advanceToNextAutoCase();
 				}
+				
 				break;
 			case SwitchPlace: //Place cube
 				targetWristPos = wristDown;
@@ -1224,23 +1145,48 @@ public class Robot extends IterativeRobot {
 		
 		wrist.set(ControlMode.Position, targetWristPos);
 		
-		if(elevatorMode == down && (highElevator.get() || lowElevator.get()))
+		if(elevatorInitialized)
 		{
-			if(lowElevator.get() && highElevator.get())
-	    	{
-	    		elevator.setSelectedSensorPosition(-34000, 0, 10);
-	    		elevator.set(ControlMode.PercentOutput, -0.005);
-	    	}
-	    	else if(lowElevator.get())
-	    		elevator.set(ControlMode.PercentOutput, -0.15);
-	    	else if(highElevator.get())
-	    		elevator.set(ControlMode.PercentOutput, 0.15);
+			if(elevatorMode == down && (highElevator.get() || lowElevator.get()))
+			{
+				if(lowElevator.get() && highElevator.get())
+				{
+					elevator.setSelectedSensorPosition(-34000, 0, 10);
+					elevator.set(ControlMode.PercentOutput, -0.005);
+				}
+				else if(lowElevator.get())
+					elevator.set(ControlMode.PercentOutput, -0.15);
+				else if(highElevator.get())
+					elevator.set(ControlMode.PercentOutput, 0.15);
+			}
+			else
+			{
+				elevator.set(ControlMode.Position, targetElevatorPos);
+			}
 		}
 		else
 		{
-			elevator.set(ControlMode.Position, targetElevatorPos);
+			if(lowElevator.get())
+			{
+				if(highElevator.get())
+				{
+					elevatorInitialized = true;
+					elevator.setSelectedSensorPosition(-34000, 0, 10);
+					elevator.set(ControlMode.PercentOutput, -0.005);
+				}
+				else
+				{
+					elevator.set(ControlMode.PercentOutput, -0.15);
+				}
+			}
+			else
+			{
+				elevator.set(ControlMode.PercentOutput, 0.15);
+			}
 		}
-			
+		
+		SmartDashboard.putBoolean("highElevator", highElevator.get());
+		SmartDashboard.putBoolean("lowElevator", lowElevator.get());
 		SmartDashboard.putNumber("autoID", autoID);
 		SmartDashboard.putNumber("positionSetpoint", positionSetpoint);
 		SmartDashboard.putNumber("directionControl", directionControl);
@@ -1261,6 +1207,15 @@ public class Robot extends IterativeRobot {
 
     public void teleopInit()
     {
+    	if(testing)
+    	{
+    		elevator.set(ControlMode.PercentOutput, -0.15);
+        	Timer.delay(.2);
+        	elevator.set(ControlMode.PercentOutput, -0.005);
+    		elevatorInitialized = false;
+    	}
+    	
+    	movingUp = false;
     	leftSide.reset();
     	if(testing)
     	{
@@ -1335,6 +1290,7 @@ public class Robot extends IterativeRobot {
 	    	//test wrist code//
 	    	if(xBox.getRawButton(3) && !manualWrist && wristMode!=up)//X
 	    	{
+	    		movingUp = true;
 	    		wristFlushed = false;
 	    		wrist.config_kP(0, upWristP, 10); 
 	    		wrist.config_kI(0, upWristI, 10);
@@ -1364,6 +1320,12 @@ public class Robot extends IterativeRobot {
 	    	if(wristMode == down && !wristFlushed && wrist.getSelectedSensorPosition(0) < -110000)
 	    	{
 	    		wristFlushed = true;
+	    		wrist.setIntegralAccumulator(0, 0, 0);
+	    	}
+	    	
+	    	if(movingUp && wrist.getSelectedSensorPosition(0) > wristUp)
+	    	{
+	    		movingUp = false;
 	    		wrist.setIntegralAccumulator(0, 0, 0);
 	    	}
 	    	
@@ -1457,19 +1419,45 @@ public class Robot extends IterativeRobot {
    				elevator.config_kD(0, downElevatorD, 10);
 	    	}
 	    	
-	    	if((!lowElevator.get() && !highElevator.get()) || elevatorMode != down)
-	    		elevator.set(ControlMode.Position, targetElevatorPos);	    	
-	    	else if(lowElevator.get() && highElevator.get())
-	    	{
-	    		elevator.setSelectedSensorPosition(-34000, 0, 10);
-	    		elevator.set(ControlMode.PercentOutput, -0.005);
-	    	}
-	    	else if(lowElevator.get())
-	    		elevator.set(ControlMode.PercentOutput, -0.15);
-	    		//elevator.set(ControlMode.PercentOutput, -0.00000294*Math.abs(elevator.getSelectedSensorPosition(0)+34000));
-	    	else if(highElevator.get())
-	    		//elevator.set(ControlMode.PercentOutput, 0.00000294*Math.abs(elevator.getSelectedSensorPosition(0)+34000));
-	    		elevator.set(ControlMode.PercentOutput, 0.15);
+	    	if(elevatorInitialized)
+			{
+				if(elevatorMode == down && (highElevator.get() || lowElevator.get()))
+				{
+					if(lowElevator.get() && highElevator.get())
+					{
+						elevator.setSelectedSensorPosition(-34000, 0, 10);
+						elevator.set(ControlMode.PercentOutput, -0.005);
+					}
+					else if(lowElevator.get())
+						elevator.set(ControlMode.PercentOutput, -0.15);
+					else if(highElevator.get())
+						elevator.set(ControlMode.PercentOutput, 0.15);
+				}
+				else
+				{
+					elevator.set(ControlMode.Position, targetElevatorPos);
+				}
+			}
+			else
+			{
+				if(lowElevator.get())
+				{
+					if(highElevator.get())
+					{
+						elevatorInitialized = true;
+						elevator.setSelectedSensorPosition(-34000, 0, 10);
+						elevator.set(ControlMode.PercentOutput, -0.005);
+					}
+					else
+					{
+						elevator.set(ControlMode.PercentOutput, -0.15);
+					}
+				}
+				else
+				{
+					elevator.set(ControlMode.PercentOutput, 0.15);
+				}
+			}
 	    		
 	    	   	//hook code
 	    	if(xBox.getRawButton(5)) //LB - extend hook
@@ -1908,7 +1896,7 @@ public class Robot extends IterativeRobot {
 		    }
 	    }
     	
-    	if(!manualCon && testing)
+    	/*if(!manualCon && testing)
     	{		   
 		    if(tuningController.getRawButton(5) && letUp5)//LB
 		    {
@@ -2164,12 +2152,12 @@ public class Robot extends IterativeRobot {
 				else
 					System.out.println("Error with multMode:"+multMode);
 			}
-    	}
+    	}*/
     	
     	if(debug)System.out.println(manualCon);
     	
-    	if(!tuningController.getRawButton(2))
-    		letUp2 = true;
+    	/*if(!tuningController.getRawButton(2))
+    		letUp2 = true;*/
     	
     	if(!xBox.getRawButton(4))
 	    	letUp4 = true;
@@ -2186,24 +2174,26 @@ public class Robot extends IterativeRobot {
     	if(!xBox.getRawButton(10))
     		letUp10 = true;
     	
-    	if(!tuningController.getRawButton(2))
-    		twoLetUp2 = true;
+    	/*if(testing)
+    	{
+    		if(!tuningController.getRawButton(2))
+    			twoLetUp2 = true;
     	
-    	if(!tuningController.getRawButton(4))
-	    	twoLetUp4 = true;
+    		if(!tuningController.getRawButton(4))
+	    		twoLetUp4 = true;
     	
-    	if(!tuningController.getRawButton(5))
-	    	twoLetUp5 = true;
+    		if(!tuningController.getRawButton(5))
+	    		twoLetUp5 = true;
 	    
-	    if(!tuningController.getRawButton(6))
-	    	twoLetUp6 = true;
+	    	if(!tuningController.getRawButton(6))
+	    		twoLetUp6 = true;
 	    
-	    if(!tuningController.getRawButton(8))
-    		twoLetUp8 = true;
+	    	if(!tuningController.getRawButton(8))
+    			twoLetUp8 = true;
     	
-    	if(!tuningController.getRawButton(10))
-    		twoLetUp10 = true;
-    	
+    		if(!tuningController.getRawButton(10))
+    			twoLetUp10 = true;
+    	}*/
     	testLoopCount++;
     	
     	SmartDashboard.putNumber("multMode", multMode*0.1);
@@ -2233,6 +2223,7 @@ public class Robot extends IterativeRobot {
     }
     
     public void testPeriodic(){
+    	System.out.println(highElevator.get()+":"+lowElevator.get());
     	//System.out.println(wrist.getSelectedSensorPosition(0));
     	//System.out.println(leftSide.get());
     	//System.out.println(lowElevator.get()+":"+highElevator.get());
